@@ -1,0 +1,5 @@
+{
+  "name": "EduReport - 학부모 주간 리포트",
+  "description": "학생의 학습 성취도, 출결 및 AI 인사이트를 제공하는 학부모용 주간 리포트 대시보드",
+  "requestFramePermissions": []
+}
