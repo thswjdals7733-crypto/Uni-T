@@ -9,6 +9,7 @@ import {
 import { motion } from 'motion/react';
 
 export interface ReportData {
+  studentId: string;
   studentName: string;
   selectedWeek: string;
   availableWeeks: string[];

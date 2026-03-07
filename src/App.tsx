@@ -15,7 +15,8 @@ const INITIAL_WEEKS = [
   "2026년 2월 2주차"
 ];
 
-const DEFAULT_REPORT_TEMPLATE = (studentName: string, week: string): ReportData => ({
+const DEFAULT_REPORT_TEMPLATE = (studentId: string, studentName: string, week: string): ReportData => ({
+  studentId,
   studentName,
   selectedWeek: week,
   availableWeeks: [], // Will be filled dynamically
@@ -57,8 +58,9 @@ const DEFAULT_REPORT_TEMPLATE = (studentName: string, week: string): ReportData 
 });
 
 const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
-  "김지우": {
+  "ST1001": {
     "2026년 3월 1주차": {
+      studentId: "ST1001",
       studentName: "김지우",
       selectedWeek: "2026년 3월 1주차",
       availableWeeks: INITIAL_WEEKS,
@@ -99,6 +101,7 @@ const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
       aiInsight: "최근 4주간의 성적 추이를 분석한 결과, 지우는 기하학적 직관력이 뛰어납니다. 함수 그래프를 시각화하여 이해하는 능력을 더욱 발전시킨다면 고난도 킬러 문항 정복이 가능할 것으로 보입니다."
     },
     "2026년 2월 4주차": {
+      studentId: "ST1001",
       studentName: "김지우",
       selectedWeek: "2026년 2월 4주차",
       availableWeeks: INITIAL_WEEKS,
@@ -142,20 +145,42 @@ const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
 };
 
 export default function App() {
-  // Get student from URL parameter
+  // Get student ID from URL parameter
   const urlParams = new URLSearchParams(window.location.search);
-  const studentFromUrl = urlParams.get('student') || "김지우";
+  const studentIdFromUrl = urlParams.get('id');
 
   const [reports, setReports] = useState<Record<string, Record<string, ReportData>>>(() => {
     const saved = localStorage.getItem('uni_t_reports');
-    return saved ? JSON.parse(saved) : INITIAL_REPORTS;
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Migration: Ensure all reports have studentId
+      Object.keys(parsed).forEach(id => {
+        Object.keys(parsed[id]).forEach(week => {
+          if (!parsed[id][week].studentId) {
+            parsed[id][week].studentId = id;
+          }
+        });
+      });
+      return parsed;
+    }
+    return INITIAL_REPORTS;
   });
 
   useEffect(() => {
     localStorage.setItem('uni_t_reports', JSON.stringify(reports));
   }, [reports]);
-  const [currentStudent, setCurrentStudent] = useState(studentFromUrl);
-  const [currentWeek, setCurrentWeek] = useState(INITIAL_WEEKS[0]);
+
+  // Determine initial current student
+  const getInitialStudent = () => {
+    if (studentIdFromUrl && reports[studentIdFromUrl]) return studentIdFromUrl;
+    return Object.keys(reports)[0] || "ST1001";
+  };
+
+  const [currentStudent, setCurrentStudent] = useState(getInitialStudent);
+  const [currentWeek, setCurrentWeek] = useState(() => {
+    const studentData = reports[getInitialStudent()] || {};
+    return Object.keys(studentData).sort().reverse()[0] || INITIAL_WEEKS[0];
+  });
   const [parentMessage, setParentMessage] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -187,7 +212,8 @@ export default function App() {
 
   // Safe data access
   const studentData = reports[currentStudent] || {};
-  const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+  const studentName = studentData[Object.keys(studentData)[0]]?.studentName || "알 수 없음";
+  const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, studentName, currentWeek);
   
   const availableWeeks = Object.keys(studentData).length > 0 
     ? Object.keys(studentData).sort().reverse() 
@@ -208,11 +234,13 @@ export default function App() {
       return;
     }
 
+    const sName = studentReports[Object.keys(studentReports)[0]]?.studentName || "알 수 없음";
+
     setReports(prev => ({
       ...prev,
       [currentStudent]: {
         ...prev[currentStudent],
-        [newWeekName]: DEFAULT_REPORT_TEMPLATE(currentStudent, newWeekName)
+        [newWeekName]: DEFAULT_REPORT_TEMPLATE(currentStudent, sName, newWeekName)
       }
     }));
     setCurrentWeek(newWeekName);
@@ -223,18 +251,15 @@ export default function App() {
   const handleAddStudent = () => {
     if (!newStudentName.trim()) return;
 
-    if (reports[newStudentName]) {
-      alert("이미 존재하는 학생입니다.");
-      return;
-    }
+    const studentId = "ST" + Math.floor(1000 + Math.random() * 9000);
 
     setReports(prev => ({
       ...prev,
-      [newStudentName]: {
-        [INITIAL_WEEKS[0]]: DEFAULT_REPORT_TEMPLATE(newStudentName, INITIAL_WEEKS[0])
+      [studentId]: {
+        [INITIAL_WEEKS[0]]: DEFAULT_REPORT_TEMPLATE(studentId, newStudentName, INITIAL_WEEKS[0])
       }
     }));
-    setCurrentStudent(newStudentName);
+    setCurrentStudent(studentId);
     setCurrentWeek(INITIAL_WEEKS[0]);
     setNewStudentName("");
     setShowAddStudent(false);
@@ -252,10 +277,11 @@ export default function App() {
 
   const updateField = (path: string, value: any) => {
     setReports(prev => {
-      const studentData = prev[currentStudent] || {};
-      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      const sData = prev[currentStudent] || {};
+      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
-      const newData = { ...weekData };
+      const newData = { ...wData };
       const keys = path.split('.');
       let current: any = newData;
       for (let i = 0; i < keys.length - 1; i++) {
@@ -267,7 +293,7 @@ export default function App() {
       return {
         ...prev,
         [currentStudent]: {
-          ...studentData,
+          ...sData,
           [currentWeek]: newData
         }
       };
@@ -278,25 +304,26 @@ export default function App() {
     if (confirm("모든 데이터가 초기화됩니다. 계속하시겠습니까?")) {
       localStorage.removeItem('uni_t_reports');
       setReports(INITIAL_REPORTS);
-      setCurrentStudent("김지우");
+      setCurrentStudent("ST1001");
       setCurrentWeek(INITIAL_WEEKS[0]);
     }
   };
 
   const handleTrendChange = (index: number, field: string, value: any) => {
     setReports(prev => {
-      const studentData = prev[currentStudent] || {};
-      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      const sData = prev[currentStudent] || {};
+      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
-      const newTrend = [...weekData.trend];
+      const newTrend = [...wData.trend];
       newTrend[index] = { ...newTrend[index], [field]: value };
       
       return {
         ...prev,
         [currentStudent]: {
-          ...studentData,
+          ...sData,
           [currentWeek]: {
-            ...weekData,
+            ...wData,
             trend: newTrend
           }
         }
@@ -306,16 +333,17 @@ export default function App() {
 
   const addTrendItem = () => {
     setReports(prev => {
-      const studentData = prev[currentStudent] || {};
-      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      const sData = prev[currentStudent] || {};
+      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
       return {
         ...prev,
         [currentStudent]: {
-          ...studentData,
+          ...sData,
           [currentWeek]: {
-            ...weekData,
-            trend: [...weekData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }]
+            ...wData,
+            trend: [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }]
           }
         }
       };
@@ -324,16 +352,17 @@ export default function App() {
 
   const removeTrendItem = (index: number) => {
     setReports(prev => {
-      const studentData = prev[currentStudent] || {};
-      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      const sData = prev[currentStudent] || {};
+      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
       return {
         ...prev,
         [currentStudent]: {
-          ...studentData,
+          ...sData,
           [currentWeek]: {
-            ...weekData,
-            trend: weekData.trend.filter((_, i) => i !== index)
+            ...wData,
+            trend: wData.trend.filter((_, i) => i !== index)
           }
         }
       };
@@ -418,7 +447,7 @@ export default function App() {
                     리포트 데이터 관리자
                   </h1>
                   <p className="text-indigo-100 text-sm mt-1">
-                    {currentStudent} 학생 / {currentWeek} 데이터 수정 중
+                    {reportData.studentName} 학생 ({currentStudent}) / {currentWeek} 데이터 수정 중
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -518,7 +547,10 @@ export default function App() {
                     }}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
-                    {Object.keys(reports).map(s => <option key={s} value={s}>{s}</option>)}
+                    {Object.keys(reports).map(id => {
+                      const studentName = reports[id][Object.keys(reports[id])[0]]?.studentName || "알 수 없음";
+                      return <option key={id} value={id}>{studentName} ({id})</option>;
+                    })}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -535,7 +567,12 @@ export default function App() {
 
               {/* 기본 정보 */}
               <section className="space-y-4">
-                <h2 className="text-lg font-bold text-slate-800 border-b pb-2">기본 정보</h2>
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h2 className="text-lg font-bold text-slate-800">기본 정보</h2>
+                  <div className="flex items-center gap-2 px-3 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold">
+                    고유번호: {currentStudent}
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">학생 이름</label>
@@ -546,6 +583,28 @@ export default function App() {
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">학부모 공유 링크</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        readOnly
+                        value={`https://thswjdals7733-crypto.github.io/Uni-T/?id=${currentStudent}`}
+                        className="flex-grow p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 outline-none"
+                      />
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(`https://thswjdals7733-crypto.github.io/Uni-T/?id=${currentStudent}`);
+                          alert("링크가 복사되었습니다.");
+                        }}
+                        className="px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
+                      >
+                        복사
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">주차 명칭</label>
                     <input 
