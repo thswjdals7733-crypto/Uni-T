@@ -7,7 +7,7 @@ import * as React from 'react';
 import { useState, useEffect, ReactNode } from 'react';
 import { motion } from 'motion/react';
 import ParentReportPage, { ReportData } from './components/ParentReportPage';
-import { Settings, Eye, Plus, Trash2, MessageSquare, AlertTriangle } from 'lucide-react';
+import { Settings, Eye, Plus, Trash2, MessageSquare, AlertTriangle, ExternalLink } from 'lucide-react';
 import { db, auth } from './firebase';
 import { 
   collection, 
@@ -300,30 +300,30 @@ function MainApp() {
     provider.setCustomParameters({ prompt: 'select_account' });
     
     try {
-      // Check if we are in an iframe
-      const isIframe = window.self !== window.top;
-      
       const result = await signInWithPopup(auth, provider);
       
       if (result.user.email === "thswjdals7733@gmail.com") {
         setIsEditMode(true);
         setShowPasswordModal(false);
         setPasswordError(false);
-        alert(`${result.user.displayName} 선생님, 환영합니다! 이제 모든 수정 사항이 서버에 실시간으로 저장됩니다.`);
+        alert(`${result.user.displayName} 선생님, 환영합니다! 이제 서버 저장이 활성화되었습니다.`);
       } else {
-        alert(`접속하신 계정(${result.user.email})은 관리자 권한이 없습니다.\n\nthswjdals7733@gmail.com 계정으로 로그인해주세요.`);
+        alert(`관리자 계정이 아닙니다: ${result.user.email}\n\nthswjdals7733@gmail.com 계정으로 다시 시도해주세요.`);
         await signOut(auth);
       }
     } catch (error: any) {
-      console.error("Login failed:", error);
-      let msg = `로그인 중 오류가 발생했습니다: ${error.message}`;
+      console.error("Detailed Login Error:", error);
+      
+      let msg = `로그인 실패 (${error.code})\n\n원인: ${error.message}`;
       
       if (error.code === 'auth/popup-blocked') {
-        msg = "브라우저의 팝업 차단 기능이 켜져 있습니다.\n\n1. 주소창 우측의 팝업 차단 아이콘을 클릭해 허용해주세요.\n2. 또는 앱을 '새 탭에서 열기'로 실행한 뒤 시도해주세요.";
+        msg = "브라우저에서 팝업이 차단되었습니다.\n\n주소창 오른쪽의 '팝업 차단' 아이콘을 눌러 허용해주시거나, 아래의 '새 탭에서 열기' 버튼을 눌러주세요.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+        msg = "Firebase 설정에서 현재 도메인이 승인되지 않았습니다.\n\nFirebase 콘솔 > Authentication > Settings > Authorized domains에 아래 주소를 추가해주세요:\n" + window.location.hostname;
       } else if (error.code === 'auth/cancelled-popup-request') {
         return;
-      } else if (error.code === 'auth/internal-error' || error.code === 'auth/network-request-failed') {
-        msg = "네트워크 오류가 발생했습니다. 인터넷 연결을 확인하거나 앱을 '새 탭에서 열기'로 실행해주세요.";
+      } else {
+        msg += "\n\n팁: 화면 하단의 '새 탭에서 열기' 버튼을 눌러 시도하면 대부분 해결됩니다.";
       }
       
       alert(msg);
@@ -762,12 +762,17 @@ function MainApp() {
                 </button>
               </div>
 
-              <div className="pt-4 border-t border-slate-100">
+              <div className="pt-4 border-t border-slate-100 space-y-3">
                 <p className="text-[10px] text-slate-400 text-center leading-relaxed">
                   구글 로그인이 작동하지 않나요?<br/>
-                  1. 브라우저의 팝업 차단을 해제해주세요.<br/>
-                  2. 앱을 '새 탭에서 열기'로 실행한 뒤 시도해주세요.
+                  보안 정책상 미리보기 창에서는 로그인이 막힐 수 있습니다.
                 </p>
+                <button 
+                  onClick={() => window.open(window.location.href, '_blank')}
+                  className="w-full py-2 bg-slate-800 text-white text-xs font-bold rounded-xl hover:bg-slate-900 transition-all flex items-center justify-center gap-2"
+                >
+                  <ExternalLink size={14} /> 앱을 새 탭에서 열기
+                </button>
               </div>
             </div>
           </motion.div>
