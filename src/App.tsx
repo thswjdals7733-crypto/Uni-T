@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import ParentReportPage, { ReportData } from './components/ParentReportPage';
 import { Settings, Eye, Plus, Trash2 } from 'lucide-react';
 
@@ -145,57 +146,98 @@ export default function App() {
   const urlParams = new URLSearchParams(window.location.search);
   const studentFromUrl = urlParams.get('student') || "김지우";
 
-  const [reports, setReports] = useState<Record<string, Record<string, ReportData>>>(INITIAL_REPORTS);
+  const [reports, setReports] = useState<Record<string, Record<string, ReportData>>>(() => {
+    const saved = localStorage.getItem('uni_t_reports');
+    return saved ? JSON.parse(saved) : INITIAL_REPORTS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('uni_t_reports', JSON.stringify(reports));
+  }, [reports]);
   const [currentStudent, setCurrentStudent] = useState(studentFromUrl);
   const [currentWeek, setCurrentWeek] = useState(INITIAL_WEEKS[0]);
   const [parentMessage, setParentMessage] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState(false);
 
-  // Ensure student and week exist
-  if (!reports[currentStudent]) {
-    reports[currentStudent] = {};
-  }
-  if (!reports[currentStudent][currentWeek]) {
-    reports[currentStudent][currentWeek] = DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
-  }
+  const handlePasswordSubmit = () => {
+    if (passwordInput === "0305") {
+      setIsEditMode(true);
+      setShowPasswordModal(false);
+      setPasswordInput("");
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+    }
+  };
 
-  const availableWeeks = Object.keys(reports[currentStudent]).sort().reverse();
-  const reportData = { ...reports[currentStudent][currentWeek], availableWeeks };
+  const toggleEditMode = () => {
+    if (isEditMode) {
+      setIsEditMode(false);
+    } else {
+      setShowPasswordModal(true);
+    }
+  };
+  const [showAddStudent, setShowAddStudent] = useState(false);
+  const [showAddWeek, setShowAddWeek] = useState(false);
+  const [newStudentName, setNewStudentName] = useState("");
+  const [newWeekName, setNewWeekName] = useState("");
+
+  // Safe data access
+  const studentData = reports[currentStudent] || {};
+  const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+  
+  const availableWeeks = Object.keys(studentData).length > 0 
+    ? Object.keys(studentData).sort().reverse() 
+    : INITIAL_WEEKS;
+
+  const reportData = { ...weekData, availableWeeks };
 
   const handleWeekChange = (week: string) => {
     setCurrentWeek(week);
   };
 
   const handleAddWeek = () => {
-    const newWeekName = prompt("추가할 주차 명칭을 입력하세요 (예: 2026년 3월 2주차)", "");
-    if (newWeekName && !reports[currentStudent][newWeekName]) {
-      setReports(prev => ({
-        ...prev,
-        [currentStudent]: {
-          ...prev[currentStudent],
-          [newWeekName]: DEFAULT_REPORT_TEMPLATE(currentStudent, newWeekName)
-        }
-      }));
-      setCurrentWeek(newWeekName);
-    } else if (newWeekName) {
+    if (!newWeekName.trim()) return;
+    
+    const studentReports = reports[currentStudent] || {};
+    if (studentReports[newWeekName]) {
       alert("이미 존재하는 주차입니다.");
+      return;
     }
+
+    setReports(prev => ({
+      ...prev,
+      [currentStudent]: {
+        ...prev[currentStudent],
+        [newWeekName]: DEFAULT_REPORT_TEMPLATE(currentStudent, newWeekName)
+      }
+    }));
+    setCurrentWeek(newWeekName);
+    setNewWeekName("");
+    setShowAddWeek(false);
   };
 
   const handleAddStudent = () => {
-    const newStudentName = prompt("추가할 학생 이름을 입력하세요", "");
-    if (newStudentName && !reports[newStudentName]) {
-      setReports(prev => ({
-        ...prev,
-        [newStudentName]: {
-          [INITIAL_WEEKS[0]]: DEFAULT_REPORT_TEMPLATE(newStudentName, INITIAL_WEEKS[0])
-        }
-      }));
-      setCurrentStudent(newStudentName);
-      setCurrentWeek(INITIAL_WEEKS[0]);
-    } else if (newStudentName) {
+    if (!newStudentName.trim()) return;
+
+    if (reports[newStudentName]) {
       alert("이미 존재하는 학생입니다.");
+      return;
     }
+
+    setReports(prev => ({
+      ...prev,
+      [newStudentName]: {
+        [INITIAL_WEEKS[0]]: DEFAULT_REPORT_TEMPLATE(newStudentName, INITIAL_WEEKS[0])
+      }
+    }));
+    setCurrentStudent(newStudentName);
+    setCurrentWeek(INITIAL_WEEKS[0]);
+    setNewStudentName("");
+    setShowAddStudent(false);
   };
 
   const handleParentMessageChange = (message: string) => {
@@ -210,9 +252,10 @@ export default function App() {
 
   const updateField = (path: string, value: any) => {
     setReports(prev => {
-      const newReports = { ...prev };
-      const newStudentData = { ...newReports[currentStudent] };
-      const newData = { ...newStudentData[currentWeek] };
+      const studentData = prev[currentStudent] || {};
+      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      
+      const newData = { ...weekData };
       const keys = path.split('.');
       let current: any = newData;
       for (let i = 0; i < keys.length - 1; i++) {
@@ -220,47 +263,80 @@ export default function App() {
         current = current[keys[i]];
       }
       current[keys[keys.length - 1]] = value;
-      newStudentData[currentWeek] = newData;
-      newReports[currentStudent] = newStudentData;
-      return newReports;
+
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...studentData,
+          [currentWeek]: newData
+        }
+      };
     });
+  };
+
+  const handleResetData = () => {
+    if (confirm("모든 데이터가 초기화됩니다. 계속하시겠습니까?")) {
+      localStorage.removeItem('uni_t_reports');
+      setReports(INITIAL_REPORTS);
+      setCurrentStudent("김지우");
+      setCurrentWeek(INITIAL_WEEKS[0]);
+    }
   };
 
   const handleTrendChange = (index: number, field: string, value: any) => {
     setReports(prev => {
-      const newReports = { ...prev };
-      const newStudentData = { ...newReports[currentStudent] };
-      const newData = { ...newStudentData[currentWeek] };
-      const newTrend = [...newData.trend];
+      const studentData = prev[currentStudent] || {};
+      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      
+      const newTrend = [...weekData.trend];
       newTrend[index] = { ...newTrend[index], [field]: value };
-      newData.trend = newTrend;
-      newStudentData[currentWeek] = newData;
-      newReports[currentStudent] = newStudentData;
-      return newReports;
+      
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...studentData,
+          [currentWeek]: {
+            ...weekData,
+            trend: newTrend
+          }
+        }
+      };
     });
   };
 
   const addTrendItem = () => {
     setReports(prev => {
-      const newReports = { ...prev };
-      const newStudentData = { ...newReports[currentStudent] };
-      const newData = { ...newStudentData[currentWeek] };
-      newData.trend = [...newData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }];
-      newStudentData[currentWeek] = newData;
-      newReports[currentStudent] = newStudentData;
-      return newReports;
+      const studentData = prev[currentStudent] || {};
+      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...studentData,
+          [currentWeek]: {
+            ...weekData,
+            trend: [...weekData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }]
+          }
+        }
+      };
     });
   };
 
   const removeTrendItem = (index: number) => {
     setReports(prev => {
-      const newReports = { ...prev };
-      const newStudentData = { ...newReports[currentStudent] };
-      const newData = { ...newStudentData[currentWeek] };
-      newData.trend = newData.trend.filter((_, i) => i !== index);
-      newStudentData[currentWeek] = newData;
-      newReports[currentStudent] = newStudentData;
-      return newReports;
+      const studentData = prev[currentStudent] || {};
+      const weekData = studentData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, currentWeek);
+      
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...studentData,
+          [currentWeek]: {
+            ...weekData,
+            trend: weekData.trend.filter((_, i) => i !== index)
+          }
+        }
+      };
     });
   };
 
@@ -268,7 +344,7 @@ export default function App() {
     <div className="relative">
       {/* Toggle Button */}
       <button
-        onClick={() => setIsEditMode(!isEditMode)}
+        onClick={toggleEditMode}
         className="fixed bottom-6 right-6 z-50 p-4 bg-indigo-600 text-white rounded-full shadow-2xl hover:bg-indigo-700 transition-all flex items-center gap-2 group"
       >
         {isEditMode ? <Eye size={20} /> : <Settings size={20} />}
@@ -276,6 +352,60 @@ export default function App() {
           {isEditMode ? "리포트 보기" : "데이터 수정하기"}
         </span>
       </button>
+
+      {/* Password Modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full border border-slate-200"
+          >
+            <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Settings className="text-indigo-600" />
+              관리자 인증
+            </h3>
+            <p className="text-slate-500 text-sm mb-6">
+              데이터 수정을 위해 비밀번호를 입력해주세요.
+            </p>
+            <div className="space-y-4">
+              <input 
+                type="password"
+                placeholder="비밀번호 입력"
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setPasswordError(false);
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
+                className={`w-full p-4 bg-slate-50 border ${passwordError ? 'border-rose-500 ring-2 ring-rose-100' : 'border-slate-200'} rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all`}
+                autoFocus
+              />
+              {passwordError && (
+                <p className="text-rose-500 text-xs font-medium">비밀번호가 일치하지 않습니다.</p>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => {
+                    setShowPasswordModal(false);
+                    setPasswordInput("");
+                    setPasswordError(false);
+                  }}
+                  className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all"
+                >
+                  취소
+                </button>
+                <button 
+                  onClick={handlePasswordSubmit}
+                  className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
+                >
+                  확인
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {isEditMode ? (
         <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
@@ -293,19 +423,80 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button 
-                    onClick={handleAddStudent}
-                    className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                    onClick={handleResetData}
+                    className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                  >
+                    <Trash2 size={14} /> 초기화
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowAddStudent(!showAddStudent);
+                      setShowAddWeek(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddStudent ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
                   >
                     <Plus size={14} /> 학생 추가
                   </button>
                   <button 
-                    onClick={handleAddWeek}
-                    className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                    onClick={() => {
+                      setShowAddWeek(!showAddWeek);
+                      setShowAddStudent(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddWeek ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
                   >
                     <Plus size={14} /> 주차 추가
                   </button>
                 </div>
               </div>
+              
+              {/* Inline Add Forms */}
+              {showAddStudent && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mt-4 p-4 bg-white/10 rounded-xl flex gap-2 items-center"
+                >
+                  <input 
+                    type="text"
+                    placeholder="새 학생 이름 입력"
+                    value={newStudentName}
+                    onChange={(e) => setNewStudentName(e.target.value)}
+                    className="flex-grow p-2 bg-white text-slate-900 rounded-lg text-sm outline-none"
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddStudent()}
+                  />
+                  <button 
+                    onClick={handleAddStudent}
+                    className="px-4 py-2 bg-white text-indigo-600 rounded-lg text-sm font-bold"
+                  >
+                    추가
+                  </button>
+                </motion.div>
+              )}
+              
+              {showAddWeek && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mt-4 p-4 bg-white/10 rounded-xl flex gap-2 items-center"
+                >
+                  <input 
+                    type="text"
+                    placeholder="새 주차 명칭 입력 (예: 2026년 3월 2주차)"
+                    value={newWeekName}
+                    onChange={(e) => setNewWeekName(e.target.value)}
+                    className="flex-grow p-2 bg-white text-slate-900 rounded-lg text-sm outline-none"
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddWeek()}
+                  />
+                  <button 
+                    onClick={handleAddWeek}
+                    className="px-4 py-2 bg-white text-indigo-600 rounded-lg text-sm font-bold"
+                  >
+                    추가
+                  </button>
+                </motion.div>
+              )}
             </div>
 
             <div className="p-6 space-y-8 max-h-[80vh] overflow-y-auto">
@@ -316,8 +507,14 @@ export default function App() {
                   <select 
                     value={currentStudent}
                     onChange={(e) => {
-                      setCurrentStudent(e.target.value);
-                      setCurrentWeek(Object.keys(reports[e.target.value])[0]);
+                      const studentName = e.target.value;
+                      setCurrentStudent(studentName);
+                      const studentWeeks = Object.keys(reports[studentName] || {});
+                      if (studentWeeks.length > 0) {
+                        setCurrentWeek(studentWeeks.sort().reverse()[0]);
+                      } else {
+                        setCurrentWeek(INITIAL_WEEKS[0]);
+                      }
                     }}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
@@ -387,8 +584,10 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-500 uppercase">테스트 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.performance.testScore} 
-                      onChange={(e) => updateField('performance.testScore', Number(e.target.value))}
+                      value={reportData.performance.testScore === 0 ? "" : reportData.performance.testScore} 
+                      onChange={(e) => updateField('performance.testScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      placeholder="0"
+                      onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -421,8 +620,10 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-500 uppercase">내 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.analysis.myScore} 
-                      onChange={(e) => updateField('analysis.myScore', Number(e.target.value))}
+                      value={reportData.analysis.myScore === 0 ? "" : reportData.analysis.myScore} 
+                      onChange={(e) => updateField('analysis.myScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      placeholder="0"
+                      onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -430,8 +631,10 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-500 uppercase">평균 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.analysis.averageScore} 
-                      onChange={(e) => updateField('analysis.averageScore', Number(e.target.value))}
+                      value={reportData.analysis.averageScore === 0 ? "" : reportData.analysis.averageScore} 
+                      onChange={(e) => updateField('analysis.averageScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      placeholder="0"
+                      onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -465,8 +668,10 @@ export default function App() {
                         <label className="text-[10px] font-bold text-slate-400 uppercase">내 점수</label>
                         <input 
                           type="number" 
-                          value={item.myScore} 
-                          onChange={(e) => handleTrendChange(idx, 'myScore', Number(e.target.value))}
+                          value={item.myScore === 0 ? "" : item.myScore} 
+                          onChange={(e) => handleTrendChange(idx, 'myScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                          placeholder="0"
+                          onFocus={(e) => e.target.select()}
                           className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                         />
                       </div>
@@ -474,8 +679,10 @@ export default function App() {
                         <label className="text-[10px] font-bold text-slate-400 uppercase">평균 점수</label>
                         <input 
                           type="number" 
-                          value={item.avgScore} 
-                          onChange={(e) => handleTrendChange(idx, 'avgScore', Number(e.target.value))}
+                          value={item.avgScore === 0 ? "" : item.avgScore} 
+                          onChange={(e) => handleTrendChange(idx, 'avgScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                          placeholder="0"
+                          onFocus={(e) => e.target.select()}
                           className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                         />
                       </div>
