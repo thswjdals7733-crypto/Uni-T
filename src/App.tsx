@@ -76,6 +76,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+  
+  if (errInfo.error.includes("Missing or insufficient permissions")) {
+    alert("저장 권한이 없습니다.\n\n비밀번호만으로는 서버 저장이 불가능합니다. '구글 로그인'을 통해 관리자 인증을 완료해주세요.");
+  }
+  
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -292,19 +297,36 @@ function MainApp() {
 
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    
     try {
+      // Check if we are in an iframe
+      const isIframe = window.self !== window.top;
+      
       const result = await signInWithPopup(auth, provider);
+      
       if (result.user.email === "thswjdals7733@gmail.com") {
         setIsEditMode(true);
         setShowPasswordModal(false);
         setPasswordError(false);
+        alert(`${result.user.displayName} 선생님, 환영합니다! 이제 모든 수정 사항이 서버에 실시간으로 저장됩니다.`);
       } else {
-        alert("관리자 권한이 없는 계정입니다.");
+        alert(`접속하신 계정(${result.user.email})은 관리자 권한이 없습니다.\n\nthswjdals7733@gmail.com 계정으로 로그인해주세요.`);
         await signOut(auth);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
-      alert("로그인에 실패했습니다.");
+      let msg = `로그인 중 오류가 발생했습니다: ${error.message}`;
+      
+      if (error.code === 'auth/popup-blocked') {
+        msg = "브라우저의 팝업 차단 기능이 켜져 있습니다.\n\n1. 주소창 우측의 팝업 차단 아이콘을 클릭해 허용해주세요.\n2. 또는 앱을 '새 탭에서 열기'로 실행한 뒤 시도해주세요.";
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        return;
+      } else if (error.code === 'auth/internal-error' || error.code === 'auth/network-request-failed') {
+        msg = "네트워크 오류가 발생했습니다. 인터넷 연결을 확인하거나 앱을 '새 탭에서 열기'로 실행해주세요.";
+      }
+      
+      alert(msg);
     }
   };
 
@@ -443,6 +465,7 @@ function MainApp() {
       setShowPasswordModal(false);
       setPasswordInput("");
       setPasswordError(false);
+      alert("임시 수정 모드로 진입합니다.\n\n주의: 보안 정책상 비밀번호만으로는 서버 저장이 제한될 수 있습니다. 확실한 저장을 위해 '구글 로그인'을 권장합니다.");
     } else {
       setPasswordError(true);
     }
@@ -738,6 +761,14 @@ function MainApp() {
                   확인
                 </button>
               </div>
+
+              <div className="pt-4 border-t border-slate-100">
+                <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                  구글 로그인이 작동하지 않나요?<br/>
+                  1. 브라우저의 팝업 차단을 해제해주세요.<br/>
+                  2. 앱을 '새 탭에서 열기'로 실행한 뒤 시도해주세요.
+                </p>
+              </div>
             </div>
           </motion.div>
         </div>
@@ -746,6 +777,38 @@ function MainApp() {
       {isEditMode ? (
         <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
           <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
+            {/* Admin Status Banner */}
+            <div className={`p-3 flex items-center justify-between ${user && !user.isAnonymous ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider">
+                {user && !user.isAnonymous ? (
+                  <>
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                    관리자 인증 완료 (서버 저장 활성화)
+                  </>
+                ) : (
+                  <>
+                    <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                    임시 수정 모드 (서버 저장 제한됨 - 구글 로그인이 필요합니다)
+                  </>
+                )}
+              </div>
+              {!user || user.isAnonymous ? (
+                <button 
+                  onClick={() => setShowPasswordModal(true)}
+                  className="px-3 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                >
+                  구글 로그인하기
+                </button>
+              ) : (
+                <button 
+                  onClick={handleLogout}
+                  className="px-3 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+                >
+                  로그아웃
+                </button>
+              )}
+            </div>
+
             <div className="bg-indigo-600 p-6 text-white">
               <div className="flex items-center justify-between">
                 <div>
