@@ -3,10 +3,124 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import * as React from 'react';
+import { useState, useEffect, ReactNode } from 'react';
 import { motion } from 'motion/react';
 import ParentReportPage, { ReportData } from './components/ParentReportPage';
-import { Settings, Eye, Plus, Trash2, MessageSquare } from 'lucide-react';
+import { Settings, Eye, Plus, Trash2, MessageSquare, AlertTriangle } from 'lucide-react';
+import { db, auth } from './firebase';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  onSnapshot, 
+  getDoc, 
+  query, 
+  getDocs,
+  getDocFromServer
+} from 'firebase/firestore';
+import { 
+  signInAnonymously, 
+  onAuthStateChanged, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut 
+} from 'firebase/auth';
+
+// --- Error Handling ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// --- Error Boundary ---
+class ErrorBoundary extends (React.Component as any) {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let message = "문제가 발생했습니다. 잠시 후 다시 시도해주세요.";
+      try {
+        const parsed = JSON.parse(this.state.error.message);
+        if (parsed.error.includes("Missing or insufficient permissions")) {
+          message = "권한이 없습니다. 관리자 로그인이 필요할 수 있습니다.";
+        }
+      } catch (e) {
+        // Not a JSON error
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center border border-slate-200">
+            <AlertTriangle className="w-16 h-16 text-rose-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">오류 발생</h2>
+            <p className="text-slate-600 mb-6">{message}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all"
+            >
+              새로고침
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const INITIAL_WEEKS = [
   "2026년 3월 1주차",
@@ -146,30 +260,149 @@ const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
 };
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
+  );
+}
+
+function MainApp() {
   // Get student ID from URL parameter
   const urlParams = new URLSearchParams(window.location.search);
   const studentIdFromUrl = urlParams.get('id');
+  const weekFromUrl = urlParams.get('week');
 
-  const [reports, setReports] = useState<Record<string, Record<string, ReportData>>>(() => {
-    const saved = localStorage.getItem('uni_t_reports');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migration: Ensure all reports have studentId
-      Object.keys(parsed).forEach(id => {
-        Object.keys(parsed[id]).forEach(week => {
-          if (!parsed[id][week].studentId) {
-            parsed[id][week].studentId = id;
+  const [reports, setReports] = useState<Record<string, Record<string, ReportData>>>(INITIAL_REPORTS);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
+
+  // Auth setup
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) {
+        signInAnonymously(auth).catch(console.error);
+      }
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      if (result.user.email === "thswjdals7733@gmail.com") {
+        setIsEditMode(true);
+        setShowPasswordModal(false);
+        setPasswordError(false);
+      } else {
+        alert("관리자 권한이 없는 계정입니다.");
+        await signOut(auth);
+      }
+    } catch (error) {
+      console.error("Login failed:", error);
+      alert("로그인에 실패했습니다.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setIsEditMode(false);
+      alert("로그아웃 되었습니다.");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
+
+  // Data Migration: LocalStorage -> Firestore
+  useEffect(() => {
+    if (!isAuthReady || isMigrating) return;
+
+    const migrate = async () => {
+      const saved = localStorage.getItem('uni_t_reports');
+      if (saved) {
+        setIsMigrating(true);
+        try {
+          const parsed = JSON.parse(saved);
+          const studentIds = Object.keys(parsed);
+          
+          for (const sId of studentIds) {
+            // Check if student exists in Firestore
+            const studentDoc = await getDoc(doc(db, 'students', sId));
+            if (!studentDoc.exists()) {
+              const studentName = parsed[sId][Object.keys(parsed[sId])[0]]?.studentName || "알 수 없음";
+              await setDoc(doc(db, 'students', sId), { studentId: sId, studentName });
+              
+              const weeks = Object.keys(parsed[sId]);
+              for (const week of weeks) {
+                await setDoc(doc(db, 'students', sId, 'reports', week), parsed[sId][week]);
+              }
+            }
           }
+          // After migration, we can clear or keep localStorage as backup
+          // localStorage.removeItem('uni_t_reports'); 
+        } catch (e) {
+          console.error("Migration failed:", e);
+        } finally {
+          setIsMigrating(false);
+        }
+      }
+    };
+
+    migrate();
+  }, [isAuthReady]);
+
+  // Sync with Firestore
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    // 1. Listen to the specific student from URL if present (Priority)
+    let unsubSpecific: (() => void) | null = null;
+    if (studentIdFromUrl) {
+      const reportsRef = collection(db, 'students', studentIdFromUrl, 'reports');
+      unsubSpecific = onSnapshot(reportsRef, (snapshot) => {
+        setReports(prev => {
+          const newReports = { ...prev };
+          if (!newReports[studentIdFromUrl]) newReports[studentIdFromUrl] = {};
+          snapshot.docs.forEach(doc => {
+            newReports[studentIdFromUrl][doc.id] = doc.data() as ReportData;
+          });
+          return newReports;
         });
       });
-      return parsed;
     }
-    return INITIAL_REPORTS;
-  });
 
-  useEffect(() => {
-    localStorage.setItem('uni_t_reports', JSON.stringify(reports));
-  }, [reports]);
+    // 2. Listen to all students (for admin view)
+    const studentsRef = collection(db, 'students');
+    const unsubStudents = onSnapshot(studentsRef, (snapshot) => {
+      snapshot.docs.forEach(studentDoc => {
+        const studentId = studentDoc.id;
+        // Skip if already listening specifically
+        if (studentId === studentIdFromUrl) return;
+
+        const reportsRef = collection(db, 'students', studentId, 'reports');
+        onSnapshot(reportsRef, (reportSnapshot) => {
+          setReports(prev => {
+            const newReports = { ...prev };
+            if (!newReports[studentId]) newReports[studentId] = {};
+            reportSnapshot.docs.forEach(doc => {
+              newReports[studentId][doc.id] = doc.data() as ReportData;
+            });
+            return newReports;
+          });
+        });
+      });
+    });
+
+    return () => {
+      if (unsubSpecific) unsubSpecific();
+      unsubStudents();
+    };
+  }, [isAuthReady, studentIdFromUrl]);
 
   // Determine initial current student
   const getInitialStudent = () => {
@@ -180,8 +413,24 @@ export default function App() {
   const [currentStudent, setCurrentStudent] = useState(getInitialStudent);
   const [currentWeek, setCurrentWeek] = useState(() => {
     const studentData = reports[getInitialStudent()] || {};
+    if (weekFromUrl && studentData[weekFromUrl]) return weekFromUrl;
     return Object.keys(studentData).sort().reverse()[0] || INITIAL_WEEKS[0];
   });
+
+  // Update current student when URL changes or data loads
+  useEffect(() => {
+    if (studentIdFromUrl && reports[studentIdFromUrl] && currentStudent !== studentIdFromUrl) {
+      setCurrentStudent(studentIdFromUrl);
+    }
+  }, [studentIdFromUrl, reports]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('id', currentStudent);
+    params.set('week', currentWeek);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', newUrl);
+  }, [currentStudent, currentWeek]);
   const [parentMessage, setParentMessage] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -201,7 +450,10 @@ export default function App() {
 
   const toggleEditMode = () => {
     if (isEditMode) {
-      setIsEditMode(false);
+      // If already in edit mode, we can just exit or ask to logout
+      if (confirm("관리자 모드를 종료하시겠습니까? (로그아웃)")) {
+        handleLogout();
+      }
     } else {
       setShowPasswordModal(true);
     }
@@ -237,24 +489,18 @@ export default function App() {
 
     const sName = studentReports[Object.keys(studentReports)[0]]?.studentName || "알 수 없음";
 
-    setReports(prev => {
-      const studentReports = prev[currentStudent] || {};
-      const firstWeekKey = Object.keys(studentReports)[0];
-      const existingTrend = firstWeekKey ? studentReports[firstWeekKey].trend : [];
-      
-      const newReport = DEFAULT_REPORT_TEMPLATE(currentStudent, sName, newWeekName);
-      if (existingTrend.length > 0) {
-        newReport.trend = existingTrend;
-      }
+    const firstWeekKey = Object.keys(studentReports)[0];
+    const existingTrend = firstWeekKey ? studentReports[firstWeekKey].trend : [];
+    
+    const newReport = DEFAULT_REPORT_TEMPLATE(currentStudent, sName, newWeekName);
+    if (existingTrend.length > 0) {
+      newReport.trend = existingTrend;
+    }
 
-      return {
-        ...prev,
-        [currentStudent]: {
-          ...studentReports,
-          [newWeekName]: newReport
-        }
-      };
-    });
+    const path = `students/${currentStudent}/reports/${newWeekName}`;
+    setDoc(doc(db, 'students', currentStudent, 'reports', newWeekName), newReport)
+      .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
+
     setCurrentWeek(newWeekName);
     setNewWeekName("");
     setShowAddWeek(false);
@@ -264,13 +510,16 @@ export default function App() {
     if (!newStudentName.trim()) return;
 
     const studentId = "ST" + Math.floor(1000 + Math.random() * 9000);
+    const initialReport = DEFAULT_REPORT_TEMPLATE(studentId, newStudentName, INITIAL_WEEKS[0]);
 
-    setReports(prev => ({
-      ...prev,
-      [studentId]: {
-        [INITIAL_WEEKS[0]]: DEFAULT_REPORT_TEMPLATE(studentId, newStudentName, INITIAL_WEEKS[0])
-      }
-    }));
+    const studentPath = `students/${studentId}`;
+    const reportPath = `students/${studentId}/reports/${INITIAL_WEEKS[0]}`;
+
+    Promise.all([
+      setDoc(doc(db, 'students', studentId), { studentId, studentName: newStudentName }),
+      setDoc(doc(db, 'students', studentId, 'reports', INITIAL_WEEKS[0]), initialReport)
+    ]).catch(err => handleFirestoreError(err, OperationType.WRITE, studentPath));
+
     setCurrentStudent(studentId);
     setCurrentWeek(INITIAL_WEEKS[0]);
     setNewStudentName("");
@@ -284,152 +533,134 @@ export default function App() {
   const handleCommentSubmit = () => {
     if (!parentMessage.trim()) return;
     
-    setReports(prev => {
-      const sData = prev[currentStudent] || {};
-      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-      
-      return {
-        ...prev,
-        [currentStudent]: {
-          ...sData,
-          [currentWeek]: {
-            ...wData,
-            parentFeedback: parentMessage
-          }
-        }
-      };
-    });
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    const updatedData = {
+      ...wData,
+      parentFeedback: parentMessage
+    };
 
-    alert(`선생님께 의견이 전달되었습니다: \n"${parentMessage}"`);
-    setParentMessage("");
+    const path = `students/${currentStudent}/reports/${currentWeek}`;
+    setDoc(doc(db, 'students', currentStudent, 'reports', currentWeek), updatedData)
+      .then(() => {
+        alert(`선생님께 의견이 전달되었습니다: \n"${parentMessage}"`);
+        setParentMessage("");
+      })
+      .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
   };
 
   const updateField = (path: string, value: any) => {
-    setReports(prev => {
-      const sData = prev[currentStudent] || {};
-      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    let newData = { ...wData };
+    const keys = path.split('.');
+    let current: any = newData;
+    for (let i = 0; i < keys.length - 1; i++) {
+      current[keys[i]] = { ...current[keys[i]] };
+      current = current[keys[i]];
+    }
+    current[keys[keys.length - 1]] = value;
+
+    // Sync performance.testScore to trend
+    if (path === 'performance.testScore') {
+      const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
+      const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
       
-      let newData = { ...wData };
-      const keys = path.split('.');
-      let current: any = newData;
-      for (let i = 0; i < keys.length - 1; i++) {
-        current[keys[i]] = { ...current[keys[i]] };
-        current = current[keys[i]];
+      const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
+      let newTrend = [...newData.trend];
+      
+      if (trendIndex > -1) {
+        newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
+      } else {
+        newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
       }
-      current[keys[keys.length - 1]] = value;
+      newData.trend = newTrend;
+    }
 
-      // Sync performance.testScore to trend
-      if (path === 'performance.testScore') {
-        const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
-        const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
-        
-        const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
-        let newTrend = [...newData.trend];
-        
-        if (trendIndex > -1) {
-          newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
-        } else {
-          newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
-          // Keep only last 5-6 items if it gets too long, or let user manage
-        }
-        newData.trend = newTrend;
-      }
-
-      // If trend was updated (either via testScore or directly), sync to all weeks of this student
-      const updatedStudentData = { ...sData };
-      Object.keys(updatedStudentData).forEach(week => {
-        updatedStudentData[week] = {
-          ...updatedStudentData[week],
+    // Update Firestore
+    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
+    
+    // If trend was updated, we need to sync to all weeks
+    if (path.startsWith('trend') || path === 'performance.testScore') {
+      const batchPromises = Object.keys(sData).map(week => {
+        const reportToUpdate = {
+          ...sData[week],
           ...(week === currentWeek ? newData : { trend: newData.trend })
         };
+        return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
       });
-
-      return {
-        ...prev,
-        [currentStudent]: updatedStudentData
-      };
-    });
+      Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
+    } else {
+      setDoc(doc(db, 'students', currentStudent, 'reports', currentWeek), newData)
+        .catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
+    }
   };
 
   const handleResetData = () => {
     if (confirm("모든 데이터가 초기화됩니다. 계속하시겠습니까?")) {
-      localStorage.removeItem('uni_t_reports');
-      setReports(INITIAL_REPORTS);
-      setCurrentStudent("ST1001");
-      setCurrentWeek(INITIAL_WEEKS[0]);
+      // For Firestore, we'd need to delete all docs. 
+      // For now, let's just alert that this is a restricted operation or implement a simple version.
+      alert("데이터베이스 초기화는 관리자 콘솔에서 수행해주세요.");
     }
   };
 
   const handleTrendChange = (index: number, field: string, value: any) => {
-    setReports(prev => {
-      const sData = prev[currentStudent] || {};
-      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-      
-      const newTrend = [...wData.trend];
-      newTrend[index] = { ...newTrend[index], [field]: value };
-      
-      const updatedStudentData = { ...sData };
-      Object.keys(updatedStudentData).forEach(week => {
-        updatedStudentData[week] = {
-          ...updatedStudentData[week],
-          trend: newTrend
-        };
-      });
-
-      return {
-        ...prev,
-        [currentStudent]: updatedStudentData
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    const newTrend = [...wData.trend];
+    newTrend[index] = { ...newTrend[index], [field]: value };
+    
+    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
+    const batchPromises = Object.keys(sData).map(week => {
+      const reportToUpdate = {
+        ...sData[week],
+        trend: newTrend
       };
+      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
     });
+    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
   };
 
   const addTrendItem = () => {
-    setReports(prev => {
-      const sData = prev[currentStudent] || {};
-      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-      
-      const newTrend = [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }];
-      
-      const updatedStudentData = { ...sData };
-      Object.keys(updatedStudentData).forEach(week => {
-        updatedStudentData[week] = {
-          ...updatedStudentData[week],
-          trend: newTrend
-        };
-      });
-
-      return {
-        ...prev,
-        [currentStudent]: updatedStudentData
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    const newTrend = [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }];
+    
+    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
+    const batchPromises = Object.keys(sData).map(week => {
+      const reportToUpdate = {
+        ...sData[week],
+        trend: newTrend
       };
+      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
     });
+    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
   };
 
   const removeTrendItem = (index: number) => {
-    setReports(prev => {
-      const sData = prev[currentStudent] || {};
-      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-      
-      const newTrend = wData.trend.filter((_, i) => i !== index);
-      
-      const updatedStudentData = { ...sData };
-      Object.keys(updatedStudentData).forEach(week => {
-        updatedStudentData[week] = {
-          ...updatedStudentData[week],
-          trend: newTrend
-        };
-      });
-
-      return {
-        ...prev,
-        [currentStudent]: updatedStudentData
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    const newTrend = wData.trend.filter((_, i) => i !== index);
+    
+    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
+    const batchPromises = Object.keys(sData).map(week => {
+      const reportToUpdate = {
+        ...sData[week],
+        trend: newTrend
       };
+      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
     });
+    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
   };
 
   return (
@@ -461,6 +692,19 @@ export default function App() {
               데이터 수정을 위해 비밀번호를 입력해주세요.
             </p>
             <div className="space-y-4">
+              <button 
+                onClick={handleGoogleLogin}
+                className="w-full py-4 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+                관리자 구글 로그인
+              </button>
+              
+              <div className="relative py-2">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200"></span></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-slate-400">또는 비밀번호 입력</span></div>
+              </div>
+
               <input 
                 type="password"
                 placeholder="비밀번호 입력"
@@ -514,6 +758,12 @@ export default function App() {
                   </p>
                 </div>
                 <div className="flex gap-2">
+                  {user && !user.isAnonymous && (
+                    <div className="flex items-center gap-2 mr-2">
+                      <img src={user.photoURL} alt="" className="w-6 h-6 rounded-full border border-white/20" />
+                      <span className="text-xs font-medium">{user.displayName}</span>
+                    </div>
+                  )}
                   <button 
                     onClick={handleResetData}
                     className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
@@ -646,26 +896,26 @@ export default function App() {
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">학부모 공유 링크</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        readOnly
-                        value={`https://thswjdals7733-crypto.github.io/Uni-T/?id=${currentStudent}`}
-                        className="flex-grow p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 outline-none"
-                      />
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(`https://thswjdals7733-crypto.github.io/Uni-T/?id=${currentStudent}`);
-                          alert("링크가 복사되었습니다.");
-                        }}
-                        className="px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
-                      >
-                        복사
-                      </button>
-                    </div>
-                  </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">학부모 공유 링크</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            readOnly
+                            value={`${window.location.origin}/?id=${currentStudent}`}
+                            className="flex-grow p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 outline-none"
+                          />
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(`${window.location.origin}/?id=${currentStudent}`);
+                              alert("링크가 복사되었습니다.");
+                            }}
+                            className="px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
+                          >
+                            복사
+                          </button>
+                        </div>
+                      </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">

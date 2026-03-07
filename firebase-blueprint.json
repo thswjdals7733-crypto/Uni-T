@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "A student profile",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" }
+      },
+      "required": ["studentId", "studentName"]
+    },
+    "Report": {
+      "title": "Weekly Report",
+      "description": "A weekly performance report for a student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "selectedWeek": { "type": "string" },
+        "attendance": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string" },
+            "note": { "type": "string" },
+            "dismissTime": { "type": "string" }
+          }
+        },
+        "performance": {
+          "type": "object",
+          "properties": {
+            "testScore": { "type": "number" }
+          }
+        },
+        "analysis": {
+          "type": "object",
+          "properties": {
+            "topic": { "type": "string" },
+            "myScore": { "type": "number" },
+            "averageScore": { "type": "number" }
+          }
+        },
+        "trend": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "week": { "type": "string" },
+              "myScore": { "type": "number" },
+              "avgScore": { "type": "number" }
+            }
+          }
+        },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "weeklyContent": { "type": "string" },
+            "homeworkNotice": { "type": "string" },
+            "nextClassNotice": { "type": "string" },
+            "extraFeedback": { "type": "string" }
+          }
+        },
+        "parentInsight": { "type": "string" },
+        "competency": {
+          "type": "object",
+          "properties": {
+            "homework": { "type": "number" },
+            "understanding": { "type": "number" },
+            "concentration": { "type": "number" },
+            "homeworkLevel": { "type": "string" },
+            "understandingLevel": { "type": "string" },
+            "concentrationLevel": { "type": "string" }
+          }
+        },
+        "aiInsight": { "type": "string" }
+      },
+      "required": ["studentId", "studentName", "selectedWeek"]
+    }
+  },
+  "firestore": {
+    "students": {
+      "schema": "Student",
+      "description": "Collection of students"
+    },
+    "students/{studentId}/reports": {
+      "schema": "Report",
+      "description": "Weekly reports for a specific student"
+    }
+  }
+}

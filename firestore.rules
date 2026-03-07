@@ -1,0 +1,83 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: students
+// Document ID: studentId (e.g., ST1001)
+// Fields:
+//   - studentId: string (required)
+//   - studentName: string (required)
+//
+// Collection: students/{studentId}/reports
+// Document ID: weekName (e.g., 2026년 3월 1주차)
+// Fields:
+//   - studentId: string (required)
+//   - studentName: string (required)
+//   - selectedWeek: string (required)
+//   - attendance: map
+//   - performance: map
+//   - analysis: map
+//   - trend: list
+//   - feedback: map
+//   - parentInsight: string
+//   - competency: map
+//   - aiInsight: string
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "thswjdals7733@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['studentId', 'studentName']) &&
+             data.studentId is string && data.studentId.size() > 0 &&
+             data.studentName is string && data.studentName.size() > 0 &&
+             data.studentName.size() < 100;
+    }
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'selectedWeek']) &&
+             data.studentId is string &&
+             data.studentName is string &&
+             data.selectedWeek is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /students/{studentId} {
+      // Allow public read for sharing purposes
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidStudent(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /reports/{reportId} {
+        // Allow public read for sharing purposes
+        allow read: if true;
+        allow create, update: if isAdmin() && isValidReport(request.resource.data);
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAdmin();
+    }
+  }
+}
