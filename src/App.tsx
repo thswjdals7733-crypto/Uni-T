@@ -237,13 +237,24 @@ export default function App() {
 
     const sName = studentReports[Object.keys(studentReports)[0]]?.studentName || "알 수 없음";
 
-    setReports(prev => ({
-      ...prev,
-      [currentStudent]: {
-        ...prev[currentStudent],
-        [newWeekName]: DEFAULT_REPORT_TEMPLATE(currentStudent, sName, newWeekName)
+    setReports(prev => {
+      const studentReports = prev[currentStudent] || {};
+      const firstWeekKey = Object.keys(studentReports)[0];
+      const existingTrend = firstWeekKey ? studentReports[firstWeekKey].trend : [];
+      
+      const newReport = DEFAULT_REPORT_TEMPLATE(currentStudent, sName, newWeekName);
+      if (existingTrend.length > 0) {
+        newReport.trend = existingTrend;
       }
-    }));
+
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...studentReports,
+          [newWeekName]: newReport
+        }
+      };
+    });
     setCurrentWeek(newWeekName);
     setNewWeekName("");
     setShowAddWeek(false);
@@ -300,7 +311,7 @@ export default function App() {
       const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
       const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
-      const newData = { ...wData };
+      let newData = { ...wData };
       const keys = path.split('.');
       let current: any = newData;
       for (let i = 0; i < keys.length - 1; i++) {
@@ -309,12 +320,35 @@ export default function App() {
       }
       current[keys[keys.length - 1]] = value;
 
+      // Sync performance.testScore to trend
+      if (path === 'performance.testScore') {
+        const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
+        const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
+        
+        const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
+        let newTrend = [...newData.trend];
+        
+        if (trendIndex > -1) {
+          newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
+        } else {
+          newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
+          // Keep only last 5-6 items if it gets too long, or let user manage
+        }
+        newData.trend = newTrend;
+      }
+
+      // If trend was updated (either via testScore or directly), sync to all weeks of this student
+      const updatedStudentData = { ...sData };
+      Object.keys(updatedStudentData).forEach(week => {
+        updatedStudentData[week] = {
+          ...updatedStudentData[week],
+          ...(week === currentWeek ? newData : { trend: newData.trend })
+        };
+      });
+
       return {
         ...prev,
-        [currentStudent]: {
-          ...sData,
-          [currentWeek]: newData
-        }
+        [currentStudent]: updatedStudentData
       };
     });
   };
@@ -337,15 +371,17 @@ export default function App() {
       const newTrend = [...wData.trend];
       newTrend[index] = { ...newTrend[index], [field]: value };
       
+      const updatedStudentData = { ...sData };
+      Object.keys(updatedStudentData).forEach(week => {
+        updatedStudentData[week] = {
+          ...updatedStudentData[week],
+          trend: newTrend
+        };
+      });
+
       return {
         ...prev,
-        [currentStudent]: {
-          ...sData,
-          [currentWeek]: {
-            ...wData,
-            trend: newTrend
-          }
-        }
+        [currentStudent]: updatedStudentData
       };
     });
   };
@@ -356,15 +392,19 @@ export default function App() {
       const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
       const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
+      const newTrend = [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }];
+      
+      const updatedStudentData = { ...sData };
+      Object.keys(updatedStudentData).forEach(week => {
+        updatedStudentData[week] = {
+          ...updatedStudentData[week],
+          trend: newTrend
+        };
+      });
+
       return {
         ...prev,
-        [currentStudent]: {
-          ...sData,
-          [currentWeek]: {
-            ...wData,
-            trend: [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }]
-          }
-        }
+        [currentStudent]: updatedStudentData
       };
     });
   };
@@ -375,15 +415,19 @@ export default function App() {
       const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
       const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
       
+      const newTrend = wData.trend.filter((_, i) => i !== index);
+      
+      const updatedStudentData = { ...sData };
+      Object.keys(updatedStudentData).forEach(week => {
+        updatedStudentData[week] = {
+          ...updatedStudentData[week],
+          trend: newTrend
+        };
+      });
+
       return {
         ...prev,
-        [currentStudent]: {
-          ...sData,
-          [currentWeek]: {
-            ...wData,
-            trend: wData.trend.filter((_, i) => i !== index)
-          }
-        }
+        [currentStudent]: updatedStudentData
       };
     });
   };
