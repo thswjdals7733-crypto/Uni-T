@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import ParentReportPage, { ReportData } from './components/ParentReportPage';
-import { Settings, Eye, Plus, Trash2 } from 'lucide-react';
+import { Settings, Eye, Plus, Trash2, MessageSquare } from 'lucide-react';
 
 const INITIAL_WEEKS = [
   "2026년 3월 1주차",
@@ -54,7 +54,8 @@ const DEFAULT_REPORT_TEMPLATE = (studentId: string, studentName: string, week: s
     understandingLevel: "우수",
     concentrationLevel: "우수"
   },
-  aiInsight: "학습 데이터를 바탕으로 한 AI 분석 내용입니다."
+  aiInsight: "학습 데이터를 바탕으로 한 AI 분석 내용입니다.",
+  parentFeedback: ""
 });
 
 const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
@@ -271,6 +272,24 @@ export default function App() {
 
   const handleCommentSubmit = () => {
     if (!parentMessage.trim()) return;
+    
+    setReports(prev => {
+      const sData = prev[currentStudent] || {};
+      const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+      const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+      
+      return {
+        ...prev,
+        [currentStudent]: {
+          ...sData,
+          [currentWeek]: {
+            ...wData,
+            parentFeedback: parentMessage
+          }
+        }
+      };
+    });
+
     alert(`선생님께 의견이 전달되었습니다: \n"${parentMessage}"`);
     setParentMessage("");
   };
@@ -872,6 +891,19 @@ export default function App() {
                   </div>
                 </div>
               </section>
+
+              {/* 학부모 의견 확인 */}
+              {reportData.parentFeedback && (
+                <section className="space-y-4">
+                  <h2 className="text-lg font-bold text-rose-600 border-b border-rose-100 pb-2 flex items-center gap-2">
+                    <MessageSquare size={20} />
+                    학부모님 전달 의견
+                  </h2>
+                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                    {reportData.parentFeedback}
+                  </div>
+                </section>
+              )}
             </div>
 
             <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-end">

@@ -47,6 +47,7 @@ export interface ReportData {
     concentrationLevel: string;
   };
   aiInsight: string;
+  parentFeedback?: string;
 }
 
 interface ParentReportPageProps {
