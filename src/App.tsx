@@ -7,7 +7,7 @@ import * as React from 'react';
 import { useState, useEffect, ReactNode } from 'react';
 import { motion } from 'motion/react';
 import ParentReportPage, { ReportData } from './components/ParentReportPage';
-import { Settings, Eye, Plus, Trash2, MessageSquare, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Settings, Eye, Plus, Trash2, MessageSquare, AlertTriangle, ExternalLink, Sparkles, Save, LogOut, Search, Calendar, Clock, Award, TrendingUp, BookOpen, Lightbulb, CheckCircle2, ChevronDown, User } from 'lucide-react';
 import { db, auth } from './firebase';
 import { 
   collection, 
@@ -27,6 +27,42 @@ import {
   signInWithPopup, 
   signOut 
 } from 'firebase/auth';
+import { GoogleGenAI } from "@google/genai";
+
+// --- AI Service ---
+const generateAIInsight = async (reportData: ReportData) => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    
+    const prompt = `
+      학생 이름: ${reportData.studentName}
+      주간 테스트 점수: ${reportData.performance.testScore}점
+      학습 역량 (0-100):
+      - 과제 수행: ${reportData.competency.homework} (${reportData.competency.homeworkLevel})
+      - 수업 이해: ${reportData.competency.understanding} (${reportData.competency.understandingLevel})
+      - 수업 집중: ${reportData.competency.concentration} (${reportData.competency.concentrationLevel})
+      
+      주간 학습 요약:
+      - 이번 주 학습 내용: ${reportData.feedback.weeklyContent}
+      - 과제 및 테스트 예고: ${reportData.feedback.homeworkNotice}
+      - 다음 주 수업 안내: ${reportData.feedback.nextClassNotice}
+      - 추가 보충 내용: ${reportData.feedback.extraFeedback}
+      
+      위 데이터를 바탕으로 학생의 이번 주 학습 성과를 분석하고, 학부모님께 전달할 따뜻하고 전문적인 'AI LEARNING INSIGHT'를 2-3문장으로 작성해줘. 
+      학생의 강점을 칭찬하고 보완할 점을 부드럽게 제안하는 어조로 작성해줘.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+    });
+
+    return response.text || "분석 결과를 생성할 수 없습니다.";
+  } catch (error) {
+    console.error("AI Insight Generation Error:", error);
+    return "AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+  }
+};
 
 // --- Error Handling ---
 enum OperationType {
@@ -165,7 +201,6 @@ const DEFAULT_REPORT_TEMPLATE = (studentId: string, studentName: string, week: s
     nextClassNotice: "다음 수업 안내를 입력하세요.",
     extraFeedback: ""
   },
-  parentInsight: "학생의 학습 태도와 성취도에 대한 의견을 입력하세요.",
   competency: {
     homework: 80,
     understanding: 80,
@@ -210,7 +245,6 @@ const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
         nextClassNotice: "다음 주부터는 '이차함수의 최대와 최소' 단원을 시작합니다. 실생활 활용 문제가 많이 등장하므로 개념 이해에 집중할 예정입니다.",
         extraFeedback: "지우는 수업 시간 중 질문이 매우 구체적이고 날카로워졌습니다. 스스로 원리를 파악하려는 노력이 돋보입니다."
       },
-      parentInsight: "지우는 최근 수학에 대한 자신감이 부쩍 상승한 모습입니다. 어려운 문제를 만났을 때 바로 포기하지 않고 여러 가지 방법으로 접근해보는 끈기가 생겼습니다. 가정에서도 지우의 이러한 변화에 대해 많은 칭찬 부탁드립니다.",
       competency: {
         homework: 95,
         understanding: 88,
@@ -251,7 +285,6 @@ const INITIAL_REPORTS: Record<string, Record<string, ReportData>> = {
         nextClassNotice: "다음 주부터는 본격적으로 이차함수의 그래프를 그리는 방법을 배웁니다.",
         extraFeedback: "오답 노트를 꼼꼼히 작성하는 습관이 잡히고 있습니다."
       },
-      parentInsight: "이번 주에는 다소 어려운 개념을 접하며 조금 힘들어하는 모습을 보였으나, 끝까지 스스로 풀어내려는 의지가 좋았습니다.",
       competency: {
         homework: 90,
         understanding: 75,
@@ -449,6 +482,85 @@ function MainApp() {
     return Object.keys(studentData).sort().reverse()[0] || INITIAL_WEEKS[0];
   });
 
+  // Local state for editing to fix Korean typing issue (IME)
+  const [localReportData, setLocalReportData] = useState<ReportData | null>(null);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+  // Sync localReportData when current student/week or reports change
+  useEffect(() => {
+    const sData = reports[currentStudent] || {};
+    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
+    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
+    
+    // Only update local state if we're not currently editing or if the student/week changed
+    setLocalReportData(wData);
+  }, [currentStudent, currentWeek, reports]);
+
+  const handleAIInsightGenerate = async () => {
+    if (!localReportData) return;
+    setIsGeneratingAI(true);
+    const insight = await generateAIInsight(localReportData);
+    updateLocalField('aiInsight', insight);
+    setIsGeneratingAI(false);
+  };
+
+  const updateLocalField = (path: string, value: any) => {
+    if (!localReportData) return;
+    
+    let newData = { ...localReportData };
+    const keys = path.split('.');
+    let current: any = newData;
+    for (let i = 0; i < keys.length - 1; i++) {
+      current[keys[i]] = { ...current[keys[i]] };
+      current = current[keys[i]];
+    }
+    current[keys[keys.length - 1]] = value;
+
+    // Sync performance.testScore to trend
+    if (path === 'performance.testScore') {
+      const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
+      const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
+      
+      const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
+      let newTrend = [...newData.trend];
+      
+      if (trendIndex > -1) {
+        newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
+      } else {
+        newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
+      }
+      newData.trend = newTrend;
+    }
+
+    setLocalReportData(newData);
+  };
+
+  const saveLocalData = () => {
+    if (!localReportData) return;
+    
+    const sData = reports[currentStudent] || {};
+    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
+    
+    // If trend was updated, we need to sync to all weeks
+    // We check if trend changed by comparing with current data in reports
+    const currentData = sData[currentWeek];
+    const trendChanged = JSON.stringify(localReportData.trend) !== JSON.stringify(currentData?.trend);
+
+    if (trendChanged) {
+      const batchPromises = Object.keys(sData).map(week => {
+        const reportToUpdate = {
+          ...sData[week],
+          ...(week === currentWeek ? localReportData : { trend: localReportData.trend })
+        };
+        return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
+      });
+      Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
+    } else {
+      setDoc(doc(db, 'students', currentStudent, 'reports', currentWeek), localReportData)
+        .catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
+    }
+  };
+
   // Update current student when URL changes or data loads
   useEffect(() => {
     if (studentIdFromUrl && reports[studentIdFromUrl] && currentStudent !== studentIdFromUrl) {
@@ -622,116 +734,12 @@ function MainApp() {
       .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
   };
 
-  const updateField = (path: string, value: any) => {
-    const sData = reports[currentStudent] || {};
-    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-    
-    let newData = { ...wData };
-    const keys = path.split('.');
-    let current: any = newData;
-    for (let i = 0; i < keys.length - 1; i++) {
-      current[keys[i]] = { ...current[keys[i]] };
-      current = current[keys[i]];
-    }
-    current[keys[keys.length - 1]] = value;
-
-    // Sync performance.testScore to trend
-    if (path === 'performance.testScore') {
-      const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
-      const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
-      
-      const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
-      let newTrend = [...newData.trend];
-      
-      if (trendIndex > -1) {
-        newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
-      } else {
-        newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
-      }
-      newData.trend = newTrend;
-    }
-
-    // Update Firestore
-    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
-    
-    // If trend was updated, we need to sync to all weeks
-    if (path.startsWith('trend') || path === 'performance.testScore') {
-      const batchPromises = Object.keys(sData).map(week => {
-        const reportToUpdate = {
-          ...sData[week],
-          ...(week === currentWeek ? newData : { trend: newData.trend })
-        };
-        return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
-      });
-      Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
-    } else {
-      setDoc(doc(db, 'students', currentStudent, 'reports', currentWeek), newData)
-        .catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
-    }
-  };
-
   const handleResetData = () => {
     if (confirm("모든 데이터가 초기화됩니다. 계속하시겠습니까?")) {
       // For Firestore, we'd need to delete all docs. 
       // For now, let's just alert that this is a restricted operation or implement a simple version.
       alert("데이터베이스 초기화는 관리자 콘솔에서 수행해주세요.");
     }
-  };
-
-  const handleTrendChange = (index: number, field: string, value: any) => {
-    const sData = reports[currentStudent] || {};
-    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-    
-    const newTrend = [...wData.trend];
-    newTrend[index] = { ...newTrend[index], [field]: value };
-    
-    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
-    const batchPromises = Object.keys(sData).map(week => {
-      const reportToUpdate = {
-        ...sData[week],
-        trend: newTrend
-      };
-      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
-    });
-    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
-  };
-
-  const addTrendItem = () => {
-    const sData = reports[currentStudent] || {};
-    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-    
-    const newTrend = [...wData.trend, { week: "새 주차", myScore: 0, avgScore: 0 }];
-    
-    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
-    const batchPromises = Object.keys(sData).map(week => {
-      const reportToUpdate = {
-        ...sData[week],
-        trend: newTrend
-      };
-      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
-    });
-    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
-  };
-
-  const removeTrendItem = (index: number) => {
-    const sData = reports[currentStudent] || {};
-    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-    
-    const newTrend = wData.trend.filter((_, i) => i !== index);
-    
-    const firestorePath = `students/${currentStudent}/reports/${currentWeek}`;
-    const batchPromises = Object.keys(sData).map(week => {
-      const reportToUpdate = {
-        ...sData[week],
-        trend: newTrend
-      };
-      return setDoc(doc(db, 'students', currentStudent, 'reports', week), reportToUpdate);
-    });
-    Promise.all(batchPromises).catch(err => handleFirestoreError(err, OperationType.WRITE, firestorePath));
   };
 
   return (
@@ -748,7 +756,7 @@ function MainApp() {
       </button>
 
 
-      {isEditMode ? (
+      {isEditMode && localReportData ? (
         <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
           <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
             {/* Admin Status Banner */}
@@ -766,21 +774,29 @@ function MainApp() {
                   </>
                 )}
               </div>
-              {!user || user.isAnonymous ? (
+              <div className="flex items-center gap-2">
                 <button 
-                  onClick={handleGoogleLogin}
-                  className="px-3 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                  onClick={saveLocalData}
+                  className="px-3 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-lg hover:bg-indigo-700 transition-colors"
                 >
-                  구글 로그인하기
+                  수동 저장
                 </button>
-              ) : (
-                <button 
-                  onClick={handleLogout}
-                  className="px-3 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors"
-                >
-                  로그아웃
-                </button>
-              )}
+                {!user || user.isAnonymous ? (
+                  <button 
+                    onClick={handleGoogleLogin}
+                    className="px-3 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                  >
+                    구글 로그인하기
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleLogout}
+                    className="px-3 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+                  >
+                    로그아웃
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="bg-indigo-600 p-6 text-white">
@@ -943,9 +959,9 @@ function MainApp() {
                   <select 
                     value={currentStudent}
                     onChange={(e) => {
-                      const studentName = e.target.value;
-                      setCurrentStudent(studentName);
-                      const studentWeeks = Object.keys(reports[studentName] || {});
+                      const studentId = e.target.value;
+                      setCurrentStudent(studentId);
+                      const studentWeeks = Object.keys(reports[studentId] || {});
                       if (studentWeeks.length > 0) {
                         setCurrentWeek(studentWeeks.sort().reverse()[0]);
                       } else {
@@ -967,7 +983,7 @@ function MainApp() {
                     onChange={(e) => setCurrentWeek(e.target.value)}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
-                    {Object.keys(reports[currentStudent]).sort().reverse().map(w => <option key={w} value={w}>{w}</option>)}
+                    {Object.keys(reports[currentStudent] || {}).sort().reverse().map(w => <option key={w} value={w}>{w}</option>)}
                   </select>
                 </div>
               </section>
@@ -985,8 +1001,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">학생 이름</label>
                     <input 
                       type="text" 
-                      value={reportData.studentName} 
-                      onChange={(e) => updateField('studentName', e.target.value)}
+                      value={localReportData.studentName} 
+                      onChange={(e) => updateLocalField('studentName', e.target.value)}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -1016,7 +1032,7 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">주차 명칭</label>
                     <input 
                       type="text" 
-                      value={reportData.selectedWeek} 
+                      value={localReportData.selectedWeek} 
                       disabled
                       className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
                     />
@@ -1032,8 +1048,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">출결 상태</label>
                     <input 
                       type="text" 
-                      value={reportData.attendance.status} 
-                      onChange={(e) => updateField('attendance.status', e.target.value)}
+                      value={localReportData.attendance.status} 
+                      onChange={(e) => updateLocalField('attendance.status', e.target.value)}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -1041,8 +1057,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">하원 시간</label>
                     <input 
                       type="text" 
-                      value={reportData.attendance.dismissTime} 
-                      onChange={(e) => updateField('attendance.dismissTime', e.target.value)}
+                      value={localReportData.attendance.dismissTime} 
+                      onChange={(e) => updateLocalField('attendance.dismissTime', e.target.value)}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -1050,8 +1066,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">테스트 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.performance.testScore === 0 ? "" : reportData.performance.testScore} 
-                      onChange={(e) => updateField('performance.testScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      value={localReportData.performance.testScore === 0 ? "" : localReportData.performance.testScore} 
+                      onChange={(e) => updateLocalField('performance.testScore', e.target.value === "" ? 0 : Number(e.target.value))}
                       placeholder="0"
                       onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -1062,8 +1078,8 @@ function MainApp() {
                   <label className="text-xs font-bold text-slate-500 uppercase">출결 비고</label>
                   <input 
                     type="text" 
-                    value={reportData.attendance.note} 
-                    onChange={(e) => updateField('attendance.note', e.target.value)}
+                    value={localReportData.attendance.note} 
+                    onChange={(e) => updateLocalField('attendance.note', e.target.value)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                   />
                 </div>
@@ -1077,8 +1093,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">분석 주제</label>
                     <input 
                       type="text" 
-                      value={reportData.analysis.topic} 
-                      onChange={(e) => updateField('analysis.topic', e.target.value)}
+                      value={localReportData.analysis.topic} 
+                      onChange={(e) => updateLocalField('analysis.topic', e.target.value)}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -1086,8 +1102,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">내 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.analysis.myScore === 0 ? "" : reportData.analysis.myScore} 
-                      onChange={(e) => updateField('analysis.myScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      value={localReportData.analysis.myScore === 0 ? "" : localReportData.analysis.myScore} 
+                      onChange={(e) => updateLocalField('analysis.myScore', e.target.value === "" ? 0 : Number(e.target.value))}
                       placeholder="0"
                       onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -1097,8 +1113,8 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">평균 점수</label>
                     <input 
                       type="number" 
-                      value={reportData.analysis.averageScore === 0 ? "" : reportData.analysis.averageScore} 
-                      onChange={(e) => updateField('analysis.averageScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                      value={localReportData.analysis.averageScore === 0 ? "" : localReportData.analysis.averageScore} 
+                      onChange={(e) => updateLocalField('analysis.averageScore', e.target.value === "" ? 0 : Number(e.target.value))}
                       placeholder="0"
                       onFocus={(e) => e.target.select()}
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -1112,21 +1128,28 @@ function MainApp() {
                 <div className="flex items-center justify-between border-b pb-2">
                   <h2 className="text-lg font-bold text-slate-800">최근 성적 추이</h2>
                   <button 
-                    onClick={addTrendItem}
+                    onClick={() => {
+                      const newTrend = [...localReportData.trend, { week: `${localReportData.trend.length + 1}주`, myScore: 0, avgScore: 0 }];
+                      updateLocalField('trend', newTrend);
+                    }}
                     className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
                   >
                     <Plus size={18} />
                   </button>
                 </div>
                 <div className="space-y-3">
-                  {reportData.trend.map((item, idx) => (
+                  {localReportData.trend.map((item, idx) => (
                     <div key={idx} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end bg-slate-50 p-3 rounded-xl border border-slate-100">
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold text-slate-400 uppercase">주차</label>
                         <input 
                           type="text" 
                           value={item.week} 
-                          onChange={(e) => handleTrendChange(idx, 'week', e.target.value)}
+                          onChange={(e) => {
+                            const newTrend = [...localReportData.trend];
+                            newTrend[idx] = { ...newTrend[idx], week: e.target.value };
+                            updateLocalField('trend', newTrend);
+                          }}
                           className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                         />
                       </div>
@@ -1135,7 +1158,11 @@ function MainApp() {
                         <input 
                           type="number" 
                           value={item.myScore === 0 ? "" : item.myScore} 
-                          onChange={(e) => handleTrendChange(idx, 'myScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                          onChange={(e) => {
+                            const newTrend = [...localReportData.trend];
+                            newTrend[idx] = { ...newTrend[idx], myScore: e.target.value === "" ? 0 : Number(e.target.value) };
+                            updateLocalField('trend', newTrend);
+                          }}
                           placeholder="0"
                           onFocus={(e) => e.target.select()}
                           className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
@@ -1146,14 +1173,21 @@ function MainApp() {
                         <input 
                           type="number" 
                           value={item.avgScore === 0 ? "" : item.avgScore} 
-                          onChange={(e) => handleTrendChange(idx, 'avgScore', e.target.value === "" ? 0 : Number(e.target.value))}
+                          onChange={(e) => {
+                            const newTrend = [...localReportData.trend];
+                            newTrend[idx] = { ...newTrend[idx], avgScore: e.target.value === "" ? 0 : Number(e.target.value) };
+                            updateLocalField('trend', newTrend);
+                          }}
                           placeholder="0"
                           onFocus={(e) => e.target.select()}
                           className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                         />
                       </div>
                       <button 
-                        onClick={() => removeTrendItem(idx)}
+                        onClick={() => {
+                          const newTrend = localReportData.trend.filter((_, i) => i !== idx);
+                          updateLocalField('trend', newTrend);
+                        }}
                         className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors flex justify-center"
                       >
                         <Trash2 size={18} />
@@ -1168,50 +1202,50 @@ function MainApp() {
                 <h2 className="text-lg font-bold text-slate-800 border-b pb-2">학습 역량 (0-100)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">과제 수행 ({reportData.competency.homework})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">과제 수행 ({localReportData.competency.homework})</label>
                     <input 
                       type="range" min="0" max="100"
-                      value={reportData.competency.homework} 
-                      onChange={(e) => updateField('competency.homework', Number(e.target.value))}
+                      value={localReportData.competency.homework} 
+                      onChange={(e) => updateLocalField('competency.homework', Number(e.target.value))}
                       className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                     />
                     <input 
                       type="text" 
                       placeholder="수행 레벨 (예: 매우 우수)"
-                      value={reportData.competency.homeworkLevel} 
-                      onChange={(e) => updateField('competency.homeworkLevel', e.target.value)}
+                      value={localReportData.competency.homeworkLevel} 
+                      onChange={(e) => updateLocalField('competency.homeworkLevel', e.target.value)}
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">수업 이해 ({reportData.competency.understanding})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">수업 이해 ({localReportData.competency.understanding})</label>
                     <input 
                       type="range" min="0" max="100"
-                      value={reportData.competency.understanding} 
-                      onChange={(e) => updateField('competency.understanding', Number(e.target.value))}
+                      value={localReportData.competency.understanding} 
+                      onChange={(e) => updateLocalField('competency.understanding', Number(e.target.value))}
                       className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                     />
                     <input 
                       type="text" 
                       placeholder="이해 레벨 (예: 우수)"
-                      value={reportData.competency.understandingLevel} 
-                      onChange={(e) => updateField('competency.understandingLevel', e.target.value)}
+                      value={localReportData.competency.understandingLevel} 
+                      onChange={(e) => updateLocalField('competency.understandingLevel', e.target.value)}
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">수업 집중 ({reportData.competency.concentration})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">수업 집중 ({localReportData.competency.concentration})</label>
                     <input 
                       type="range" min="0" max="100"
-                      value={reportData.competency.concentration} 
-                      onChange={(e) => updateField('competency.concentration', Number(e.target.value))}
+                      value={localReportData.competency.concentration} 
+                      onChange={(e) => updateLocalField('competency.concentration', Number(e.target.value))}
                       className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                     />
                     <input 
                       type="text" 
                       placeholder="집중 레벨 (예: 매우 우수)"
-                      value={reportData.competency.concentrationLevel} 
-                      onChange={(e) => updateField('competency.concentrationLevel', e.target.value)}
+                      value={localReportData.competency.concentrationLevel} 
+                      onChange={(e) => updateLocalField('competency.concentrationLevel', e.target.value)}
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                     />
                   </div>
@@ -1225,58 +1259,71 @@ function MainApp() {
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">이번 주 학습 내용</label>
                     <textarea 
-                      value={reportData.feedback.weeklyContent} 
-                      onChange={(e) => updateField('feedback.weeklyContent', e.target.value)}
+                      value={localReportData.feedback.weeklyContent} 
+                      onChange={(e) => updateLocalField('feedback.weeklyContent', e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">과제 및 테스트 예고</label>
                     <textarea 
-                      value={reportData.feedback.homeworkNotice} 
-                      onChange={(e) => updateField('feedback.homeworkNotice', e.target.value)}
+                      value={localReportData.feedback.homeworkNotice} 
+                      onChange={(e) => updateLocalField('feedback.homeworkNotice', e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">다음 주 수업 안내</label>
                     <textarea 
-                      value={reportData.feedback.nextClassNotice} 
-                      onChange={(e) => updateField('feedback.nextClassNotice', e.target.value)}
+                      value={localReportData.feedback.nextClassNotice} 
+                      onChange={(e) => updateLocalField('feedback.nextClassNotice', e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">추가 보충 내용</label>
                     <textarea 
-                      value={reportData.feedback.extraFeedback} 
-                      onChange={(e) => updateField('feedback.extraFeedback', e.target.value)}
+                      value={localReportData.feedback.extraFeedback} 
+                      onChange={(e) => updateLocalField('feedback.extraFeedback', e.target.value)}
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
                 </div>
               </section>
 
-              {/* 밀착 리포트 및 AI 인사이트 */}
+              {/* AI 인사이트 생성 */}
               <section className="space-y-4">
-                <h2 className="text-lg font-bold text-slate-800 border-b pb-2">밀착 리포트 & AI</h2>
-                <div className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">학부모님께 드리는 밀착 리포트</label>
-                    <textarea 
-                      value={reportData.parentInsight} 
-                      onChange={(e) => updateField('parentInsight', e.target.value)}
-                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm h-32 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">AI LEARNING INSIGHT</label>
-                    <textarea 
-                      value={reportData.aiInsight} 
-                      onChange={(e) => updateField('aiInsight', e.target.value)}
-                      className="w-full p-3 bg-slate-900 text-indigo-100 border border-slate-800 rounded-xl text-sm h-32 resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h2 className="text-lg font-bold text-slate-800">AI LEARNING INSIGHT</h2>
+                  <button 
+                    onClick={handleAIInsightGenerate}
+                    disabled={isGeneratingAI}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                      isGeneratingAI 
+                        ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'
+                    }`}
+                  >
+                    {isGeneratingAI ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+                        AI 분석 중...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={14} />
+                        AI 리포트 생성
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  <textarea 
+                    value={localReportData.aiInsight} 
+                    onChange={(e) => updateLocalField('aiInsight', e.target.value)}
+                    placeholder="AI 리포트 생성 버튼을 누르거나 직접 입력하세요."
+                    className="w-full p-4 bg-slate-900 text-indigo-100 border border-slate-800 rounded-2xl text-sm h-48 resize-none focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
+                  />
                 </div>
               </section>
 
@@ -1296,7 +1343,10 @@ function MainApp() {
 
             <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-end">
               <button 
-                onClick={() => setIsEditMode(false)}
+                onClick={async () => {
+                  await saveLocalData();
+                  setIsEditMode(false);
+                }}
                 className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
               >
                 수정 완료 및 리포트 보기

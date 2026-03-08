@@ -37,7 +37,6 @@ export interface ReportData {
     nextClassNotice: string;
     extraFeedback: string;
   };
-  parentInsight: string;
   competency: {
     homework: number;
     understanding: number;
@@ -355,24 +354,6 @@ export default function ParentReportPage({
             </div>
           </motion.section>
         </div>
-
-        {/* 7. Parent Personalized Message */}
-        <motion.section 
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="bg-gradient-to-r from-indigo-50 to-blue-50 p-8 rounded-2xl border border-indigo-100"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white">
-              <User className="w-6 h-6" />
-            </div>
-            <h2 className="text-lg font-bold text-indigo-900">학부모님께 드리는 밀착 리포트</h2>
-          </div>
-          <p className="text-slate-700 leading-relaxed text-sm md:text-base">
-            {data.parentInsight}
-          </p>
-        </motion.section>
 
         {/* 5. Teacher Comment Section */}
         <motion.section 
