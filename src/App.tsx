@@ -529,7 +529,7 @@ function MainApp() {
     setShowAddWeek(false);
   };
 
-  const handleAddStudent = () => {
+  const handleAddStudent = async () => {
     if (!newStudentName.trim()) return;
 
     const studentId = "ST" + Math.floor(1000 + Math.random() * 9000);
@@ -538,15 +538,26 @@ function MainApp() {
     const studentPath = `students/${studentId}`;
     const reportPath = `students/${studentId}/reports/${INITIAL_WEEKS[0]}`;
 
-    Promise.all([
-      setDoc(doc(db, 'students', studentId), { studentId, studentName: newStudentName }),
-      setDoc(doc(db, 'students', studentId, 'reports', INITIAL_WEEKS[0]), initialReport)
-    ]).catch(err => handleFirestoreError(err, OperationType.WRITE, studentPath));
+    try {
+      // 1. Create student document
+      await setDoc(doc(db, 'students', studentId), { 
+        studentId, 
+        studentName: newStudentName,
+        createdAt: new Date().toISOString()
+      });
+      
+      // 2. Create initial report
+      await setDoc(doc(db, 'students', studentId, 'reports', INITIAL_WEEKS[0]), initialReport);
 
-    setCurrentStudent(studentId);
-    setCurrentWeek(INITIAL_WEEKS[0]);
-    setNewStudentName("");
-    setShowAddStudent(false);
+      setCurrentStudent(studentId);
+      setCurrentWeek(INITIAL_WEEKS[0]);
+      setNewStudentName("");
+      setShowAddStudent(false);
+      alert(`${newStudentName} 학생이 성공적으로 추가되었습니다.`);
+    } catch (err) {
+      console.error("Add Student Error:", err);
+      handleFirestoreError(err, OperationType.WRITE, studentPath);
+    }
   };
 
   const handleParentMessageChange = (message: string) => {
@@ -829,7 +840,10 @@ function MainApp() {
                   {user && !user.isAnonymous && (
                     <div className="flex items-center gap-2 mr-2">
                       <img src={user.photoURL} alt="" className="w-6 h-6 rounded-full border border-white/20" />
-                      <span className="text-xs font-medium">{user.displayName}</span>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold leading-none">{user.displayName}</span>
+                        <span className="text-[8px] opacity-70 leading-none mt-1">{user.email}</span>
+                      </div>
                     </div>
                   )}
                   <button 
