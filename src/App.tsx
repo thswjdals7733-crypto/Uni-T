@@ -15,6 +15,7 @@ import {
   setDoc, 
   onSnapshot, 
   getDoc, 
+  deleteDoc,
   query, 
   getDocs,
   getDocFromServer
@@ -301,15 +302,24 @@ function MainApp() {
     
     try {
       const result = await signInWithPopup(auth, provider);
+      const email = result.user.email;
       
-      if (result.user.email === "thswjdals7733@gmail.com") {
+      // Check if primary admin or in admin_emails list
+      const isAdmin = email === "thswjdals7733@gmail.com" || adminEmails.includes(email || "");
+      
+      if (isAdmin) {
         setIsEditMode(true);
-        setShowPasswordModal(false);
-        setPasswordError(false);
         alert(`${result.user.displayName} 선생님, 환영합니다! 이제 서버 저장이 활성화되었습니다.`);
       } else {
-        alert(`관리자 계정이 아닙니다: ${result.user.email}\n\nthswjdals7733@gmail.com 계정으로 다시 시도해주세요.`);
-        await signOut(auth);
+        // Double check Firestore just in case state hasn't updated
+        const adminDoc = await getDoc(doc(db, 'admin_emails', email || ""));
+        if (adminDoc.exists()) {
+          setIsEditMode(true);
+          alert(`${result.user.displayName} 선생님, 환영합니다! 이제 서버 저장이 활성화되었습니다.`);
+        } else {
+          alert(`관리자 권한이 없는 계정입니다: ${email}\n\n관리자에게 권한 요청을 하시거나, 등록된 계정으로 로그인해주세요.`);
+          await signOut(auth);
+        }
       }
     } catch (error: any) {
       console.error("Detailed Login Error:", error);
@@ -428,14 +438,14 @@ function MainApp() {
 
   // Determine initial current student
   const getInitialStudent = () => {
-    if (studentIdFromUrl && reports[studentIdFromUrl]) return studentIdFromUrl;
+    if (studentIdFromUrl) return studentIdFromUrl;
     return Object.keys(reports)[0] || "ST1001";
   };
 
   const [currentStudent, setCurrentStudent] = useState(getInitialStudent);
   const [currentWeek, setCurrentWeek] = useState(() => {
+    if (weekFromUrl) return weekFromUrl;
     const studentData = reports[getInitialStudent()] || {};
-    if (weekFromUrl && studentData[weekFromUrl]) return weekFromUrl;
     return Object.keys(studentData).sort().reverse()[0] || INITIAL_WEEKS[0];
   });
 
@@ -455,36 +465,63 @@ function MainApp() {
   }, [currentStudent, currentWeek]);
   const [parentMessage, setParentMessage] = useState("");
   const [isEditMode, setIsEditMode] = useState(false);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [passwordError, setPasswordError] = useState(false);
-
-  const handlePasswordSubmit = () => {
-    if (passwordInput === "0305") {
-      setIsEditMode(true);
-      setShowPasswordModal(false);
-      setPasswordInput("");
-      setPasswordError(false);
-      alert("임시 수정 모드로 진입합니다.\n\n주의: 보안 정책상 비밀번호만으로는 서버 저장이 제한될 수 있습니다. 확실한 저장을 위해 '구글 로그인'을 권장합니다.");
-    } else {
-      setPasswordError(true);
-    }
-  };
 
   const toggleEditMode = () => {
     if (isEditMode) {
-      // If already in edit mode, we can just exit or ask to logout
       if (confirm("관리자 모드를 종료하시겠습니까? (로그아웃)")) {
         handleLogout();
       }
     } else {
-      setShowPasswordModal(true);
+      handleGoogleLogin();
     }
   };
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [showAddWeek, setShowAddWeek] = useState(false);
+  const [showAdminManage, setShowAdminManage] = useState(false);
   const [newStudentName, setNewStudentName] = useState("");
   const [newWeekName, setNewWeekName] = useState("");
+  const [newAdminEmail, setNewAdminEmail] = useState("");
+  const [adminEmails, setAdminEmails] = useState<string[]>([]);
+
+  // Fetch admin emails
+  useEffect(() => {
+    if (!isAuthReady || !user || user.isAnonymous) return;
+    
+    const unsub = onSnapshot(collection(db, 'admin_emails'), (snapshot) => {
+      setAdminEmails(snapshot.docs.map(doc => doc.id));
+    });
+    return () => unsub();
+  }, [isAuthReady, user]);
+
+  const handleAddAdmin = async () => {
+    if (!newAdminEmail.trim() || !newAdminEmail.includes('@')) {
+      alert("올바른 이메일 주소를 입력해주세요.");
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'admin_emails', newAdminEmail.trim()), {
+        addedAt: new Date().toISOString(),
+        addedBy: user.email
+      });
+      setNewAdminEmail("");
+      alert(`${newAdminEmail} 계정이 관리자로 추가되었습니다.`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `admin_emails/${newAdminEmail}`);
+    }
+  };
+
+  const handleRemoveAdmin = async (email: string) => {
+    if (email === "thswjdals7733@gmail.com") {
+      alert("기본 관리자 계정은 삭제할 수 없습니다.");
+      return;
+    }
+    if (!confirm(`${email} 계정의 관리자 권한을 삭제하시겠습니까?`)) return;
+    try {
+      await deleteDoc(doc(db, 'admin_emails', email));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `admin_emails/${email}`);
+    }
+  };
 
   // Safe data access
   const studentData = reports[currentStudent] || {};
@@ -710,85 +747,6 @@ function MainApp() {
         </span>
       </button>
 
-      {/* Password Modal */}
-      {showPasswordModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-white p-8 rounded-3xl shadow-2xl max-w-sm w-full border border-slate-200"
-          >
-            <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Settings className="text-indigo-600" />
-              관리자 인증
-            </h3>
-            <p className="text-slate-500 text-sm mb-6">
-              데이터 수정을 위해 비밀번호를 입력해주세요.
-            </p>
-            <div className="space-y-4">
-              <button 
-                onClick={handleGoogleLogin}
-                className="w-full py-4 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
-              >
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-                관리자 구글 로그인
-              </button>
-              
-              <div className="relative py-2">
-                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200"></span></div>
-                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-slate-400">또는 비밀번호 입력</span></div>
-              </div>
-
-              <input 
-                type="password"
-                placeholder="비밀번호 입력"
-                value={passwordInput}
-                onChange={(e) => {
-                  setPasswordInput(e.target.value);
-                  setPasswordError(false);
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
-                className={`w-full p-4 bg-slate-50 border ${passwordError ? 'border-rose-500 ring-2 ring-rose-100' : 'border-slate-200'} rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all`}
-                autoFocus
-              />
-              {passwordError && (
-                <p className="text-rose-500 text-xs font-medium">비밀번호가 일치하지 않습니다.</p>
-              )}
-              <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => {
-                    setShowPasswordModal(false);
-                    setPasswordInput("");
-                    setPasswordError(false);
-                  }}
-                  className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all"
-                >
-                  취소
-                </button>
-                <button 
-                  onClick={handlePasswordSubmit}
-                  className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
-                >
-                  확인
-                </button>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 space-y-3">
-                <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                  구글 로그인이 작동하지 않나요?<br/>
-                  보안 정책상 미리보기 창에서는 로그인이 막힐 수 있습니다.
-                </p>
-                <button 
-                  onClick={() => window.open(window.location.href, '_blank')}
-                  className="w-full py-2 bg-slate-800 text-white text-xs font-bold rounded-xl hover:bg-slate-900 transition-all flex items-center justify-center gap-2"
-                >
-                  <ExternalLink size={14} /> 앱을 새 탭에서 열기
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
 
       {isEditMode ? (
         <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
@@ -804,13 +762,13 @@ function MainApp() {
                 ) : (
                   <>
                     <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                    임시 수정 모드 (서버 저장 제한됨 - 구글 로그인이 필요합니다)
+                    비로그인 상태 (데이터 수정은 로그인이 필요합니다)
                   </>
                 )}
               </div>
               {!user || user.isAnonymous ? (
                 <button 
-                  onClick={() => setShowPasswordModal(true)}
+                  onClick={handleGoogleLogin}
                   className="px-3 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg hover:bg-amber-700 transition-colors"
                 >
                   구글 로그인하기
@@ -854,8 +812,19 @@ function MainApp() {
                   </button>
                   <button 
                     onClick={() => {
+                      setShowAdminManage(!showAdminManage);
+                      setShowAddStudent(false);
+                      setShowAddWeek(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAdminManage ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
+                  >
+                    <Settings size={14} /> 계정 관리
+                  </button>
+                  <button 
+                    onClick={() => {
                       setShowAddStudent(!showAddStudent);
                       setShowAddWeek(false);
+                      setShowAdminManage(false);
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddStudent ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
                   >
@@ -865,6 +834,7 @@ function MainApp() {
                     onClick={() => {
                       setShowAddWeek(!showAddWeek);
                       setShowAddStudent(false);
+                      setShowAdminManage(false);
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddWeek ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
                   >
@@ -874,6 +844,48 @@ function MainApp() {
               </div>
               
               {/* Inline Add Forms */}
+              {showAdminManage && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mt-4 p-4 bg-white/10 rounded-xl space-y-4"
+                >
+                  <div className="flex gap-2 items-center">
+                    <input 
+                      type="email"
+                      placeholder="추가할 관리자 구글 이메일 입력"
+                      value={newAdminEmail}
+                      onChange={(e) => setNewAdminEmail(e.target.value)}
+                      className="flex-grow p-2 bg-white text-slate-900 rounded-lg text-sm outline-none"
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddAdmin()}
+                    />
+                    <button 
+                      onClick={handleAddAdmin}
+                      className="px-4 py-2 bg-white text-indigo-600 rounded-lg text-sm font-bold"
+                    >
+                      추가
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase">현재 관리자 목록</p>
+                    <div className="flex flex-wrap gap-2">
+                      <div className="px-2 py-1 bg-white/20 rounded-md text-[10px] flex items-center gap-2">
+                        <span>thswjdals7733@gmail.com (기본)</span>
+                      </div>
+                      {adminEmails.map(email => (
+                        <div key={email} className="px-2 py-1 bg-white/20 rounded-md text-[10px] flex items-center gap-2">
+                          <span>{email}</span>
+                          <button onClick={() => handleRemoveAdmin(email)} className="text-rose-300 hover:text-rose-100">
+                            <Trash2 size={10} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               {showAddStudent && (
                 <motion.div 
                   initial={{ opacity: 0, height: 0 }}

@@ -41,6 +41,7 @@ service cloud.firestore {
       return isAuthenticated() &&
         (
           (request.auth.token.email == "thswjdals7733@gmail.com") ||
+          exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email)) ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
         );
@@ -63,6 +64,11 @@ service cloud.firestore {
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /admin_emails/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
 
     match /students/{studentId} {
       // Allow public read for sharing purposes
