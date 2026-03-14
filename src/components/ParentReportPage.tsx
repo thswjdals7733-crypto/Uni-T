@@ -199,7 +199,7 @@ export default function ParentReportPage({
         >
           <div className="flex items-center gap-2 mb-6">
             <TrendingUp className="w-5 h-5 text-indigo-600" />
-            <h2 className="text-lg font-bold text-slate-800">최근 성적 추이</h2>
+            <h2 className="text-lg font-bold text-slate-800">성적 추이</h2>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">

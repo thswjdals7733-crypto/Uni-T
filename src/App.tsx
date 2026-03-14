@@ -201,10 +201,7 @@ const DEFAULT_REPORT_TEMPLATE = (studentId: string, studentName: string, week: s
     averageScore: 0
   },
   trend: [
-    { week: "1주", myScore: 0, avgScore: 0 },
-    { week: "2주", myScore: 0, avgScore: 0 },
-    { week: "3주", myScore: 0, avgScore: 0 },
-    { week: "4주", myScore: 0, avgScore: 0 }
+    { week: "1주", myScore: 0, avgScore: 0 }
   ],
   feedback: {
     weeklyContent: "이번 주 학습 내용을 입력하세요.",
@@ -1255,7 +1252,7 @@ function MainApp() {
               {/* 성적 추이 */}
               <section className="space-y-4">
                 <div className="flex items-center justify-between border-b pb-2">
-                  <h2 className="text-lg font-bold text-slate-800">최근 성적 추이</h2>
+                  <h2 className="text-lg font-bold text-slate-800">성적 추이</h2>
                   <button 
                     onClick={() => {
                       const newTrend = [...localReportData.trend, { week: `${localReportData.trend.length + 1}주`, myScore: 0, avgScore: 0 }];
