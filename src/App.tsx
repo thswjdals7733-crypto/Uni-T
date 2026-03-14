@@ -32,8 +32,13 @@ import { GoogleGenAI } from "@google/genai";
 // --- AI Service ---
 const generateAIInsight = async (reportData: ReportData) => {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("API Key missing");
+    // Try both process.env (Vite define) and import.meta.env
+    const apiKey = process.env.GEMINI_API_KEY || (import.meta.env?.VITE_GEMINI_API_KEY as string);
+    
+    if (!apiKey || apiKey === "undefined") {
+      console.error("Gemini API Key is missing or undefined.");
+      return "AI 분석을 위한 API 키가 설정되지 않았습니다. 관리자에게 문의해주세요.";
+    }
 
     const ai = new GoogleGenAI({ apiKey });
     
@@ -56,14 +61,17 @@ const generateAIInsight = async (reportData: ReportData) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash", // Using a highly compatible model
       contents: [{ parts: [{ text: prompt }] }],
     });
 
     return response.text || "분석 결과를 생성할 수 없습니다.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("AI Insight Generation Error:", error);
-    return "AI 분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    if (error?.message?.includes("API_KEY_INVALID")) {
+      return "API 키가 유효하지 않습니다. 설정을 확인해주세요.";
+    }
+    return `AI 분석 중 오류가 발생했습니다: ${error?.message || "알 수 없는 오류"}`;
   }
 };
 
@@ -1326,8 +1334,10 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">과제 수행 (0-100)</label>
                     <input 
                       type="number" min="0" max="100"
-                      value={localReportData.competency.homework} 
-                      onChange={(e) => updateLocalField('competency.homework', Number(e.target.value))}
+                      value={localReportData.competency.homework === 0 ? "" : localReportData.competency.homework} 
+                      onChange={(e) => updateLocalField('competency.homework', e.target.value === "" ? 0 : Number(e.target.value))}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0"
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
                     <div className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-full inline-block">
@@ -1338,8 +1348,10 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">수업 이해 (0-100)</label>
                     <input 
                       type="number" min="0" max="100"
-                      value={localReportData.competency.understanding} 
-                      onChange={(e) => updateLocalField('competency.understanding', Number(e.target.value))}
+                      value={localReportData.competency.understanding === 0 ? "" : localReportData.competency.understanding} 
+                      onChange={(e) => updateLocalField('competency.understanding', e.target.value === "" ? 0 : Number(e.target.value))}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0"
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
                     <div className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full inline-block">
@@ -1350,8 +1362,10 @@ function MainApp() {
                     <label className="text-xs font-bold text-slate-500 uppercase">수업 집중 (0-100)</label>
                     <input 
                       type="number" min="0" max="100"
-                      value={localReportData.competency.concentration} 
-                      onChange={(e) => updateLocalField('competency.concentration', Number(e.target.value))}
+                      value={localReportData.competency.concentration === 0 ? "" : localReportData.competency.concentration} 
+                      onChange={(e) => updateLocalField('competency.concentration', e.target.value === "" ? 0 : Number(e.target.value))}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0"
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
                     <div className="px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full inline-block">
