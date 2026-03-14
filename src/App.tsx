@@ -516,9 +516,9 @@ function MainApp() {
   };
 
   const getCompetencyLevel = (score: number) => {
-    if (score >= 90) return "매우 우수";
-    if (score >= 70) return "우수";
-    if (score >= 25) return "보통";
+    if (score >= 91) return "매우 우수";
+    if (score >= 71) return "우수";
+    if (score >= 26) return "보통";
     return "미흡";
   };
 
