@@ -32,7 +32,10 @@ import { GoogleGenAI } from "@google/genai";
 // --- AI Service ---
 const generateAIInsight = async (reportData: ReportData) => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("API Key missing");
+
+    const ai = new GoogleGenAI({ apiKey });
     
     const prompt = `
       학생 이름: ${reportData.studentName}
@@ -504,6 +507,13 @@ function MainApp() {
     setIsGeneratingAI(false);
   };
 
+  const getCompetencyLevel = (score: number) => {
+    if (score >= 90) return "매우 우수";
+    if (score >= 70) return "우수";
+    if (score >= 25) return "보통";
+    return "미흡";
+  };
+
   const updateLocalField = (path: string, value: any) => {
     if (!localReportData) return;
     
@@ -516,8 +526,10 @@ function MainApp() {
     }
     current[keys[keys.length - 1]] = value;
 
-    // Sync performance.testScore to trend
+    // Sync performance.testScore and analysis.myScore
     if (path === 'performance.testScore') {
+      newData.analysis.myScore = value;
+      
       const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
       const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
       
@@ -530,6 +542,28 @@ function MainApp() {
         newTrend.push({ week: weekLabel, myScore: value, avgScore: 0 });
       }
       newData.trend = newTrend;
+    } else if (path === 'analysis.myScore') {
+      newData.performance.testScore = value;
+      
+      const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
+      const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
+      
+      const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
+      let newTrend = [...newData.trend];
+      
+      if (trendIndex > -1) {
+        newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
+      }
+      newData.trend = newTrend;
+    }
+
+    // Auto-update competency levels
+    if (path === 'competency.homework') {
+      newData.competency.homeworkLevel = getCompetencyLevel(value);
+    } else if (path === 'competency.understanding') {
+      newData.competency.understandingLevel = getCompetencyLevel(value);
+    } else if (path === 'competency.concentration') {
+      newData.competency.concentrationLevel = getCompetencyLevel(value);
     }
 
     setLocalReportData(newData);
@@ -593,19 +627,92 @@ function MainApp() {
   const [newStudentName, setNewStudentName] = useState("");
   const [newWeekName, setNewWeekName] = useState("");
   const [newAdminEmail, setNewAdminEmail] = useState("");
-  const [adminEmails, setAdminEmails] = useState<string[]>([]);
+  const [adminEmails, setAdminEmails] = useState<any[]>([]);
+  const [accessibleStudents, setAccessibleStudents] = useState<string[] | null>(null);
 
-  // Fetch admin emails
+  const isSuperAdmin = user?.email === "thswjdals7733@gmail.com";
+
+  // Fetch admin data and permissions
   useEffect(() => {
-    if (!isAuthReady || !user || user.isAnonymous) return;
+    if (!isAuthReady || !user || user.isAnonymous) {
+      setAdminEmails([]);
+      setAccessibleStudents(null);
+      return;
+    }
     
-    const unsub = onSnapshot(collection(db, 'admin_emails'), (snapshot) => {
-      setAdminEmails(snapshot.docs.map(doc => doc.id));
+    const unsubAdmins = onSnapshot(collection(db, 'admin_emails'), (snapshot) => {
+      const admins = snapshot.docs.map(doc => ({ email: doc.id, ...doc.data() }));
+      setAdminEmails(admins);
+      
+      const currentUserAdmin = admins.find((a: any) => a.email === user.email) as any;
+      if (isSuperAdmin) {
+        setAccessibleStudents(null); // null means all
+      } else if (currentUserAdmin) {
+        setAccessibleStudents(currentUserAdmin.accessibleStudents || []);
+      } else {
+        setAccessibleStudents([]);
+      }
     });
-    return () => unsub();
-  }, [isAuthReady, user]);
+    
+    return () => unsubAdmins();
+  }, [isAuthReady, user, isSuperAdmin]);
+
+  const handleUpdateAdminAccess = async (email: string, studentId: string, checked: boolean) => {
+    if (!isSuperAdmin) return;
+    
+    const adminDoc = adminEmails.find(a => a.email === email);
+    let newAccess = [...(adminDoc?.accessibleStudents || [])];
+    
+    if (checked) {
+      if (!newAccess.includes(studentId)) newAccess.push(studentId);
+    } else {
+      newAccess = newAccess.filter(id => id !== studentId);
+    }
+    
+    try {
+      await setDoc(doc(db, 'admin_emails', email), { accessibleStudents: newAccess }, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `admin_emails/${email}`);
+    }
+  };
+
+  const handleDeleteStudent = async (studentId: string) => {
+    if (!isSuperAdmin) {
+      alert("학생 삭제 권한이 없습니다.");
+      return;
+    }
+    if (studentId === 'ST1001') {
+      alert("기본 학생 데이터는 삭제할 수 없습니다.");
+      return;
+    }
+    if (!confirm(`학생 ${studentId}의 모든 리포트 데이터가 삭제됩니다. 계속하시겠습니까?`)) return;
+    
+    try {
+      const reportsRef = collection(db, 'students', studentId, 'reports');
+      const reportsSnap = await getDocs(reportsRef);
+      for (const reportDoc of reportsSnap.docs) {
+        await deleteDoc(doc(db, 'students', studentId, 'reports', reportDoc.id));
+      }
+      await deleteDoc(doc(db, 'students', studentId));
+      
+      setReports(prev => {
+        const newReports = { ...prev };
+        delete newReports[studentId];
+        return newReports;
+      });
+      
+      if (currentStudent === studentId) {
+        setCurrentStudent(Object.keys(reports).find(id => id !== studentId) || "");
+      }
+      
+      alert("학생 데이터가 삭제되었습니다.");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `students/${studentId}`);
+    }
+  };
 
   const handleAddAdmin = async () => {
+    if (!isSuperAdmin) return;
     if (!newAdminEmail.trim() || !newAdminEmail.includes('@')) {
       alert("올바른 이메일 주소를 입력해주세요.");
       return;
@@ -613,7 +720,8 @@ function MainApp() {
     try {
       await setDoc(doc(db, 'admin_emails', newAdminEmail.trim()), {
         addedAt: new Date().toISOString(),
-        addedBy: user.email
+        addedBy: user.email,
+        accessibleStudents: []
       });
       setNewAdminEmail("");
       alert(`${newAdminEmail} 계정이 관리자로 추가되었습니다.`);
@@ -623,6 +731,7 @@ function MainApp() {
   };
 
   const handleRemoveAdmin = async (email: string) => {
+    if (!isSuperAdmin) return;
     if (email === "thswjdals7733@gmail.com") {
       alert("기본 관리자 계정은 삭제할 수 없습니다.");
       return;
@@ -634,6 +743,12 @@ function MainApp() {
       handleFirestoreError(err, OperationType.DELETE, `admin_emails/${email}`);
     }
   };
+
+  // Filter reports based on access
+  const filteredStudentIds = Object.keys(reports).filter(id => {
+    if (accessibleStudents === null) return true;
+    return accessibleStudents.includes(id);
+  });
 
   // Safe data access
   const studentData = reports[currentStudent] || {};
@@ -821,12 +936,6 @@ function MainApp() {
                     </div>
                   )}
                   <button 
-                    onClick={handleResetData}
-                    className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
-                  >
-                    <Trash2 size={14} /> 초기화
-                  </button>
-                  <button 
                     onClick={() => {
                       setShowAdminManage(!showAdminManage);
                       setShowAddStudent(false);
@@ -884,17 +993,39 @@ function MainApp() {
                   </div>
                   
                   <div className="space-y-2">
-                    <p className="text-[10px] font-bold text-indigo-200 uppercase">현재 관리자 목록</p>
-                    <div className="flex flex-wrap gap-2">
-                      <div className="px-2 py-1 bg-white/20 rounded-md text-[10px] flex items-center gap-2">
-                        <span>thswjdals7733@gmail.com (기본)</span>
+                    <p className="text-[10px] font-bold text-indigo-200 uppercase">현재 관리자 목록 및 학생 접근 권한</p>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-white/10 rounded-lg text-[10px]">
+                        <p className="font-bold mb-1">thswjdals7733@gmail.com (슈퍼 관리자)</p>
+                        <p className="text-indigo-200">모든 학생 리포트에 접근 가능합니다.</p>
                       </div>
-                      {adminEmails.map(email => (
-                        <div key={email} className="px-2 py-1 bg-white/20 rounded-md text-[10px] flex items-center gap-2">
-                          <span>{email}</span>
-                          <button onClick={() => handleRemoveAdmin(email)} className="text-rose-300 hover:text-rose-100">
-                            <Trash2 size={10} />
-                          </button>
+                      {adminEmails.filter(a => a.email !== "thswjdals7733@gmail.com").map((admin: any) => (
+                        <div key={admin.email} className="p-3 bg-white/10 rounded-lg space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold">{admin.email}</span>
+                            <button onClick={() => handleRemoveAdmin(admin.email)} className="text-rose-300 hover:text-rose-100">
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[8px] text-indigo-200 font-bold uppercase">접근 가능한 학생 선택</p>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.keys(reports).map(sId => {
+                                const sName = reports[sId][Object.keys(reports[sId])[0]]?.studentName || sId;
+                                return (
+                                  <label key={sId} className="flex items-center gap-1 bg-white/5 px-2 py-1 rounded cursor-pointer hover:bg-white/10 transition-colors">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={(admin.accessibleStudents || []).includes(sId)}
+                                      onChange={(e) => handleUpdateAdminAccess(admin.email, sId, e.target.checked)}
+                                      className="w-3 h-3 accent-indigo-500"
+                                    />
+                                    <span className="text-[9px]">{sName}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -955,7 +1086,17 @@ function MainApp() {
               {/* 학생 및 주차 선택 (관리자용) */}
               <section className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">관리할 학생 선택</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-500 uppercase">관리할 학생 선택</label>
+                    {isSuperAdmin && currentStudent !== 'ST1001' && (
+                      <button 
+                        onClick={() => handleDeleteStudent(currentStudent)}
+                        className="text-rose-500 hover:text-rose-700 text-[10px] font-bold flex items-center gap-1"
+                      >
+                        <Trash2 size={10} /> 학생 삭제
+                      </button>
+                    )}
+                  </div>
                   <select 
                     value={currentStudent}
                     onChange={(e) => {
@@ -970,7 +1111,7 @@ function MainApp() {
                     }}
                     className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                   >
-                    {Object.keys(reports).map(id => {
+                    {filteredStudentIds.map(id => {
                       const studentName = reports[id][Object.keys(reports[id])[0]]?.studentName || "알 수 없음";
                       return <option key={id} value={id}>{studentName} ({id})</option>;
                     })}
@@ -1006,26 +1147,6 @@ function MainApp() {
                       className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
                   </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-500 uppercase">학부모 공유 링크</label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            readOnly
-                            value={`${window.location.origin}/?id=${currentStudent}`}
-                            className="flex-grow p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 outline-none"
-                          />
-                          <button 
-                            onClick={() => {
-                              navigator.clipboard.writeText(`${window.location.origin}/?id=${currentStudent}`);
-                              alert("링크가 복사되었습니다.");
-                            }}
-                            className="px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
-                          >
-                            복사
-                          </button>
-                        </div>
-                      </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -1202,52 +1323,40 @@ function MainApp() {
                 <h2 className="text-lg font-bold text-slate-800 border-b pb-2">학습 역량 (0-100)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">과제 수행 ({localReportData.competency.homework})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">과제 수행 (0-100)</label>
                     <input 
-                      type="range" min="0" max="100"
+                      type="number" min="0" max="100"
                       value={localReportData.competency.homework} 
                       onChange={(e) => updateLocalField('competency.homework', Number(e.target.value))}
-                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
-                    <input 
-                      type="text" 
-                      placeholder="수행 레벨 (예: 매우 우수)"
-                      value={localReportData.competency.homeworkLevel} 
-                      onChange={(e) => updateLocalField('competency.homeworkLevel', e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    />
+                    <div className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-full inline-block">
+                      {localReportData.competency.homeworkLevel}
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">수업 이해 ({localReportData.competency.understanding})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">수업 이해 (0-100)</label>
                     <input 
-                      type="range" min="0" max="100"
+                      type="number" min="0" max="100"
                       value={localReportData.competency.understanding} 
                       onChange={(e) => updateLocalField('competency.understanding', Number(e.target.value))}
-                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
-                    <input 
-                      type="text" 
-                      placeholder="이해 레벨 (예: 우수)"
-                      value={localReportData.competency.understandingLevel} 
-                      onChange={(e) => updateLocalField('competency.understandingLevel', e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    />
+                    <div className="px-3 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full inline-block">
+                      {localReportData.competency.understandingLevel}
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">수업 집중 ({localReportData.competency.concentration})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">수업 집중 (0-100)</label>
                     <input 
-                      type="range" min="0" max="100"
+                      type="number" min="0" max="100"
                       value={localReportData.competency.concentration} 
                       onChange={(e) => updateLocalField('competency.concentration', Number(e.target.value))}
-                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-sm"
                     />
-                    <input 
-                      type="text" 
-                      placeholder="집중 레벨 (예: 매우 우수)"
-                      value={localReportData.competency.concentrationLevel} 
-                      onChange={(e) => updateLocalField('competency.concentrationLevel', e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    />
+                    <div className="px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full inline-block">
+                      {localReportData.competency.concentrationLevel}
+                    </div>
                   </div>
                 </div>
               </section>
