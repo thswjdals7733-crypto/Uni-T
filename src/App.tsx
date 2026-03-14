@@ -940,26 +940,30 @@ function MainApp() {
                       </div>
                     </div>
                   )}
-                  <button 
-                    onClick={() => {
-                      setShowAdminManage(!showAdminManage);
-                      setShowAddStudent(false);
-                      setShowAddWeek(false);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAdminManage ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
-                  >
-                    <Settings size={14} /> 계정 관리
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setShowAddStudent(!showAddStudent);
-                      setShowAddWeek(false);
-                      setShowAdminManage(false);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddStudent ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
-                  >
-                    <Plus size={14} /> 학생 추가
-                  </button>
+                  {isSuperAdmin && (
+                    <>
+                      <button 
+                        onClick={() => {
+                          setShowAdminManage(!showAdminManage);
+                          setShowAddStudent(false);
+                          setShowAddWeek(false);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAdminManage ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
+                      >
+                        <Settings size={14} /> 계정 관리
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setShowAddStudent(!showAddStudent);
+                          setShowAddWeek(false);
+                          setShowAdminManage(false);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showAddStudent ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
+                      >
+                        <Plus size={14} /> 학생 추가
+                      </button>
+                    </>
+                  )}
                   <button 
                     onClick={() => {
                       setShowAddWeek(!showAddWeek);
@@ -974,7 +978,7 @@ function MainApp() {
               </div>
               
               {/* Inline Add Forms */}
-              {showAdminManage && (
+              {isSuperAdmin && showAdminManage && (
                 <motion.div 
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -1038,7 +1042,7 @@ function MainApp() {
                 </motion.div>
               )}
 
-              {showAddStudent && (
+              {isSuperAdmin && showAddStudent && (
                 <motion.div 
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
