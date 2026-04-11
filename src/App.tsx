@@ -30,10 +30,9 @@ import {
 import { GoogleGenAI } from "@google/genai";
 
 // --- AI Service ---
-const generateAIInsight = async (reportData: ReportData) => {
+const generateAIInsight = async (reportData: ReportData, history: ReportData[] = []) => {
   try {
-    // Try both process.env (Vite define) and import.meta.env
-    const apiKey = process.env.GEMINI_API_KEY || (import.meta.env?.VITE_GEMINI_API_KEY as string);
+    const apiKey = process.env.GEMINI_API_KEY;
     
     if (!apiKey || apiKey === "undefined") {
       console.error("Gemini API Key is missing or undefined.");
@@ -42,8 +41,25 @@ const generateAIInsight = async (reportData: ReportData) => {
 
     const ai = new GoogleGenAI({ apiKey });
     
+    // Format history for the prompt
+    const historyContext = history.length > 0 
+      ? `
+        [이전 학습 이력]
+        ${history.map(h => `
+        - ${h.selectedWeek}:
+          * 테스트 점수: ${h.performance.testScore}점
+          * 학습 내용: ${h.feedback.weeklyContent}
+          * 튜터 피드백: ${h.feedback.extraFeedback}
+        `).join('\n')}
+      ` 
+      : "이전 학습 이력이 없습니다.";
+
     const prompt = `
       학생 이름: ${reportData.studentName}
+      
+      ${historyContext}
+
+      [이번 주 (${reportData.selectedWeek}) 데이터 - 메인 분석 대상]
       주간 테스트 점수: ${reportData.performance.testScore}점
       학습 역량 (0-100):
       - 과제 수행: ${reportData.competency.homework} (${reportData.competency.homeworkLevel})
@@ -57,20 +73,21 @@ const generateAIInsight = async (reportData: ReportData) => {
       - 추가 보충 내용: ${reportData.feedback.extraFeedback}
       
       위 데이터를 바탕으로 학생의 이번 주 학습 성과를 분석하고, 학부모님께 전달할 따뜻하고 전문적인 'AI LEARNING INSIGHT'를 2-3문장으로 작성해줘. 
-      학생의 강점을 칭찬하고 보완할 점을 부드럽게 제안하는 어조로 작성해줘.
+      
+      지침:
+      1. 이번 주 내용을 중심으로 작성하되, 이전 이력이 있다면 성적 추이나 학습 태도의 변화를 언급하여 종합적인 성장을 보여줘.
+      2. 학생의 강점을 칭찬하고 보완할 점을 부드럽게 제안하는 어조로 작성해줘.
+      3. 학부모님이 학생의 학습 흐름을 한눈에 파악할 수 있도록 전문적이면서도 다정한 톤을 유지해줘.
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash", // Using a highly compatible model
-      contents: [{ parts: [{ text: prompt }] }],
+      model: "gemini-3-flash-preview",
+      contents: prompt,
     });
 
     return response.text || "분석 결과를 생성할 수 없습니다.";
   } catch (error: any) {
     console.error("AI Insight Generation Error:", error);
-    if (error?.message?.includes("API_KEY_INVALID")) {
-      return "API 키가 유효하지 않습니다. 설정을 확인해주세요.";
-    }
     return `AI 분석 중 오류가 발생했습니다: ${error?.message || "알 수 없는 오류"}`;
   }
 };
@@ -507,7 +524,20 @@ function MainApp() {
   const handleAIInsightGenerate = async () => {
     if (!localReportData) return;
     setIsGeneratingAI(true);
-    const insight = await generateAIInsight(localReportData);
+    
+    // Get previous reports for context
+    const studentReports = reports[currentStudent] || {};
+    const allWeeks = Object.keys(studentReports).sort(); // Chronological order (assuming YYYY-MM-WW format)
+    const currentWeekIdx = allWeeks.indexOf(currentWeek);
+    
+    // Get up to 3 previous weeks for context
+    const previousWeeks = currentWeekIdx > 0 
+      ? allWeeks.slice(Math.max(0, currentWeekIdx - 3), currentWeekIdx)
+      : [];
+    
+    const history = previousWeeks.map(w => studentReports[w]);
+
+    const insight = await generateAIInsight(localReportData, history);
     updateLocalField('aiInsight', insight);
     setIsGeneratingAI(false);
   };
