@@ -590,6 +590,19 @@ function MainApp() {
         newTrend[trendIndex] = { ...newTrend[trendIndex], myScore: value };
       }
       newData.trend = newTrend;
+    } else if (path === 'analysis.averageScore') {
+      const weekLabelMatch = currentWeek.match(/(\d+월 \d+주)/);
+      const weekLabel = weekLabelMatch ? weekLabelMatch[1] : currentWeek;
+      
+      const trendIndex = newData.trend.findIndex(t => t.week === weekLabel);
+      let newTrend = [...newData.trend];
+      
+      if (trendIndex > -1) {
+        newTrend[trendIndex] = { ...newTrend[trendIndex], avgScore: value };
+      } else {
+        newTrend.push({ week: weekLabel, myScore: newData.analysis.myScore, avgScore: value });
+      }
+      newData.trend = newTrend;
     }
 
     // Auto-update competency levels
