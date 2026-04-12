@@ -363,7 +363,7 @@ function MainApp() {
       const email = result.user.email;
       
       // Check if primary admin or in admin_emails list
-      const isAdmin = email === "thswjdals7733@gmail.com" || adminEmails.includes(email || "");
+      const isAdmin = email === "thswjdals7733@gmail.com" || adminEmails.some(a => a.email === email);
       
       if (isAdmin) {
         setIsEditMode(true);
@@ -1013,17 +1013,6 @@ function MainApp() {
                       </button>
                       <button 
                         onClick={() => {
-                          setShowApiKeyInput(!showApiKeyInput);
-                          setShowAdminManage(false);
-                          setShowAddStudent(false);
-                          setShowAddWeek(false);
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showApiKeyInput ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
-                      >
-                        <Sparkles size={14} /> AI 키 설정
-                      </button>
-                      <button 
-                        onClick={() => {
                           setShowAddStudent(!showAddStudent);
                           setShowAddWeek(false);
                           setShowAdminManage(false);
@@ -1035,6 +1024,17 @@ function MainApp() {
                       </button>
                     </>
                   )}
+                  <button 
+                    onClick={() => {
+                      setShowApiKeyInput(!showApiKeyInput);
+                      setShowAdminManage(false);
+                      setShowAddStudent(false);
+                      setShowAddWeek(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${showApiKeyInput ? 'bg-white text-indigo-600' : 'bg-white/20 hover:bg-white/30 text-white'}`}
+                  >
+                    <Sparkles size={14} /> AI 키 설정
+                  </button>
                   <button 
                     onClick={() => {
                       setShowAddWeek(!showAddWeek);
