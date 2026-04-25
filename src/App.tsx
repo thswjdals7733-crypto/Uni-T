@@ -13,6 +13,7 @@ import {
   collection, 
   doc, 
   setDoc, 
+  updateDoc,
   onSnapshot, 
   getDoc, 
   deleteDoc,
@@ -891,25 +892,21 @@ function MainApp() {
     setParentMessage(message);
   };
 
-  const handleCommentSubmit = () => {
+  const handleCommentSubmit = async () => {
     if (!parentMessage.trim()) return;
     
-    const sData = reports[currentStudent] || {};
-    const sName = sData[Object.keys(sData)[0]]?.studentName || "알 수 없음";
-    const wData = sData[currentWeek] || DEFAULT_REPORT_TEMPLATE(currentStudent, sName, currentWeek);
-    
-    const updatedData = {
-      ...wData,
-      parentFeedback: parentMessage
-    };
-
     const path = `students/${currentStudent}/reports/${currentWeek}`;
-    setDoc(doc(db, 'students', currentStudent, 'reports', currentWeek), updatedData)
-      .then(() => {
-        alert(`선생님께 의견이 전달되었습니다: \n"${parentMessage}"`);
-        setParentMessage("");
-      })
-      .catch(err => handleFirestoreError(err, OperationType.WRITE, path));
+    const reportRef = doc(db, 'students', currentStudent, 'reports', currentWeek);
+
+    try {
+      await updateDoc(reportRef, {
+        parentFeedback: parentMessage
+      });
+      alert(`선생님께 의견이 전달되었습니다: \n"${parentMessage}"`);
+      setParentMessage("");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+    }
   };
 
   const handleResetData = () => {
