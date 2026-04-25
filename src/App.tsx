@@ -33,15 +33,15 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 // --- AI Service ---
 const generateAIInsight = async (reportData: ReportData, history: ReportData[] = [], customApiKey?: string) => {
   try {
-    const apiKey = customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string);
+    const apiKey = (customApiKey && customApiKey.trim() !== "") ? customApiKey : (import.meta.env.VITE_GEMINI_API_KEY as string);
     
     if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") {
       console.error("Gemini API Key is missing or undefined.");
-      return "AI 분석을 위한 API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 입력해주세요.";
+      return "AI 분석을 위한 API 키가 설정되지 않았습니다. 상단 '관리자 설정' 버튼을 눌러 본인의 Gemini API 키를 입력해주세요. (AI Studio에서 발급 가능)";
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     // Format history for the prompt
     const historyContext = history.length > 0 
@@ -95,11 +95,15 @@ const generateAIInsight = async (reportData: ReportData, history: ReportData[] =
 
 const refineTextWithAI = async (fieldName: string, text: string, customApiKey?: string) => {
   try {
-    const apiKey = customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string);
-    if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") return text;
+    const apiKey = (customApiKey && customApiKey.trim() !== "") ? customApiKey : (import.meta.env.VITE_GEMINI_API_KEY as string);
+    
+    if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") {
+      alert("AI 기능을 사용하려면 API 키 설정이 필요합니다. 관리자 설정에서 키를 등록해주세요.");
+      return text;
+    }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `
       대상 필드: ${fieldName}
@@ -117,6 +121,7 @@ const refineTextWithAI = async (fieldName: string, text: string, customApiKey?: 
     return refinedText.trim() || text;
   } catch (error: any) {
     console.error("AI Refinement Error:", error);
+    alert(`AI 문장 다듬기 실패: ${error?.message || "알 수 없는 오류"}`);
     return text;
   }
 };
@@ -555,21 +560,26 @@ function MainApp() {
     if (!localReportData) return;
     setIsGeneratingAI(true);
     
-    // Get previous reports for context
-    const studentReports = reports[currentStudent] || {};
-    const allWeeks = Object.keys(studentReports).sort(); // Chronological order (assuming YYYY-MM-WW format)
-    const currentWeekIdx = allWeeks.indexOf(currentWeek);
-    
-    // Get up to 3 previous weeks for context
-    const previousWeeks = currentWeekIdx > 0 
-      ? allWeeks.slice(Math.max(0, currentWeekIdx - 3), currentWeekIdx)
-      : [];
-    
-    const history = previousWeeks.map(w => studentReports[w]);
+    try {
+      // Get previous reports for context
+      const studentReports = reports[currentStudent] || {};
+      const allWeeks = Object.keys(studentReports).sort(); // Chronological order
+      const currentWeekIdx = allWeeks.indexOf(currentWeek);
+      
+      // Get up to 3 previous weeks for context
+      const previousWeeks = currentWeekIdx > 0 
+        ? allWeeks.slice(Math.max(0, currentWeekIdx - 3), currentWeekIdx)
+        : [];
+      
+      const history = previousWeeks.map(w => studentReports[w]);
 
-    const insight = await generateAIInsight(localReportData, history, userApiKey);
-    updateLocalField('aiInsight', insight);
-    setIsGeneratingAI(false);
+      const insight = await generateAIInsight(localReportData, history, userApiKey);
+      updateLocalField('aiInsight', insight);
+    } catch (error) {
+      console.error("Handle AI Insight Generate Error:", error);
+    } finally {
+      setIsGeneratingAI(false);
+    }
   };
 
   const handleRefineField = async (path: string, fieldName: string) => {
@@ -583,15 +593,20 @@ function MainApp() {
     }
     const currentText = current as string;
     
-    if (!currentText.trim() || currentText.includes("입력하세요")) {
+    if (!currentText || !currentText.trim() || currentText.includes("입력하세요")) {
       alert("내용을 먼저 입력해주세요.");
       return;
     }
 
     setRefiningField(path);
-    const refined = await refineTextWithAI(fieldName, currentText, userApiKey);
-    updateLocalField(path, refined);
-    setRefiningField(null);
+    try {
+      const refined = await refineTextWithAI(fieldName, currentText, userApiKey);
+      updateLocalField(path, refined);
+    } catch (error) {
+      console.error("Handle Refine Field Error:", error);
+    } finally {
+      setRefiningField(null);
+    }
   };
 
   const getCompetencyLevel = (score: number) => {
@@ -1105,43 +1120,7 @@ function MainApp() {
                 >
                   <div className="flex items-center gap-2 text-indigo-200 mb-1">
                     <AlertTriangle size={14} />
-                    <p className="text-[10px] font-bold uppercase">Gemini API 키 설정 (GitHub Pages용)</p>
-                  </div>
-                  <p className="text-[11px] text-indigo-100 leading-relaxed">
-                    깃허브 페이지와 같은 환경에서 AI 기능을 사용하려면 본인의 Gemini API 키가 필요합니다. 
-                    입력하신 키는 서버에 저장되지 않고 **현재 브라우저에만 안전하게 저장**됩니다.
-                  </p>
-                  <div className="flex gap-2">
-                    <input 
-                      type="password"
-                      placeholder="AI API 키 입력 (AI Studio에서 발급)"
-                      value={userApiKey}
-                      onChange={(e) => setUserApiKey(e.target.value)}
-                      className="flex-grow p-2 bg-white text-slate-900 rounded-lg text-sm outline-none"
-                    />
-                    <button 
-                      onClick={() => saveApiKey(userApiKey)}
-                      className="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-bold hover:bg-indigo-400 transition-colors"
-                    >
-                      저장
-                    </button>
-                  </div>
-                  <p className="text-[9px] text-indigo-300">
-                    * 키가 없으시다면 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="underline">Google AI Studio</a>에서 무료로 발급받으실 수 있습니다.
-                  </p>
-                </motion.div>
-              )}
-
-              {/* API Key Input Form */}
-              {showApiKeyInput && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="mt-4 p-4 bg-indigo-900/40 border border-indigo-400/30 rounded-xl space-y-3"
-                >
-                  <div className="flex items-center gap-2 text-indigo-200 mb-1">
-                    <AlertTriangle size={14} />
-                    <p className="text-[10px] font-bold uppercase">Gemini API 키 설정 (GitHub Pages용)</p>
+                    <p className="text-[10px] font-bold uppercase">Gemini AI 키 설정 (GitHub Pages용)</p>
                   </div>
                   <p className="text-[11px] text-indigo-100 leading-relaxed">
                     깃허브 페이지와 같은 환경에서 AI 기능을 사용하려면 본인의 Gemini API 키가 필요합니다. 
