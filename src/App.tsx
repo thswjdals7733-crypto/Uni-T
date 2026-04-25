@@ -28,7 +28,7 @@ import {
   signInWithPopup, 
   signOut 
 } from 'firebase/auth';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
 // --- AI Service ---
 const generateAIInsight = async (reportData: ReportData, history: ReportData[] = [], customApiKey?: string) => {
@@ -40,8 +40,7 @@ const generateAIInsight = async (reportData: ReportData, history: ReportData[] =
       return "AI 분석을 위한 API 키가 설정되지 않았습니다. 상단 '관리자 설정' 버튼을 눌러 본인의 Gemini API 키를 입력해주세요. (AI Studio에서 발급 가능)";
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const ai = new GoogleGenAI({ apiKey });
     
     // Format history for the prompt
     const historyContext = history.length > 0 
@@ -82,11 +81,12 @@ const generateAIInsight = async (reportData: ReportData, history: ReportData[] =
       3. 학부모님이 학생의 학습 흐름을 한눈에 파악할 수 있도록 전문적이면서도 다정한 톤을 유지해줘.
     `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
 
-    return text.trim() || "분석 결과를 생성할 수 없습니다.";
+    return response.text.trim() || "분석 결과를 생성할 수 없습니다.";
   } catch (error: any) {
     console.error("AI Insight Generation Error:", error);
     return `AI 분석 호출 실패: ${error?.message || "알 수 없는 오류"}. API 키가 유효한지 확인해주세요.`;
@@ -102,8 +102,7 @@ const refineTextWithAI = async (fieldName: string, text: string, customApiKey?: 
       return text;
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const ai = new GoogleGenAI({ apiKey });
 
     const prompt = `
       대상 필드: ${fieldName}
@@ -114,11 +113,12 @@ const refineTextWithAI = async (fieldName: string, text: string, customApiKey?: 
       결과는 다듬어진 텍스트만 출력해줘.
     `;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const refinedText = response.text();
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
 
-    return refinedText.trim() || text;
+    return response.text.trim() || text;
   } catch (error: any) {
     console.error("AI Refinement Error:", error);
     alert(`AI 문장 다듬기 실패: ${error?.message || "알 수 없는 오류"}`);
