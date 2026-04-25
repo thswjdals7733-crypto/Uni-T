@@ -28,19 +28,20 @@ import {
   signInWithPopup, 
   signOut 
 } from 'firebase/auth';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // --- AI Service ---
 const generateAIInsight = async (reportData: ReportData, history: ReportData[] = [], customApiKey?: string) => {
   try {
-    const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+    const apiKey = customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string);
     
     if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") {
       console.error("Gemini API Key is missing or undefined.");
       return "AI 분석을 위한 API 키가 설정되지 않았습니다. 관리자 설정에서 API 키를 입력해주세요.";
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
     
     // Format history for the prompt
     const historyContext = history.length > 0 
@@ -81,15 +82,42 @@ const generateAIInsight = async (reportData: ReportData, history: ReportData[] =
       3. 학부모님이 학생의 학습 흐름을 한눈에 파악할 수 있도록 전문적이면서도 다정한 톤을 유지해줘.
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    return response.text || "분석 결과를 생성할 수 없습니다.";
+    return text.trim() || "분석 결과를 생성할 수 없습니다.";
   } catch (error: any) {
     console.error("AI Insight Generation Error:", error);
-    return `AI 분석 중 오류가 발생했습니다: ${error?.message || "알 수 없는 오류"}`;
+    return `AI 분석 호출 실패: ${error?.message || "알 수 없는 오류"}. API 키가 유효한지 확인해주세요.`;
+  }
+};
+
+const refineTextWithAI = async (fieldName: string, text: string, customApiKey?: string) => {
+  try {
+    const apiKey = customApiKey || (import.meta.env.VITE_GEMINI_API_KEY as string);
+    if (!apiKey || apiKey === "undefined" || apiKey.trim() === "") return text;
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
+    const prompt = `
+      대상 필드: ${fieldName}
+      입력 텍스트: ${text}
+      
+      위 텍스트를 바탕으로, 학부모님께 전달할 리포트용 문장으로 정중하고 전문적이게 다듬어줘. 
+      내용이 너무 짧다면 적절한 격려나 안내 문구를 추가해서 풍성하게 만들어줘.
+      결과는 다듬어진 텍스트만 출력해줘.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const refinedText = response.text();
+
+    return refinedText.trim() || text;
+  } catch (error: any) {
+    console.error("AI Refinement Error:", error);
+    return text;
   }
 };
 
@@ -511,6 +539,7 @@ function MainApp() {
   // Local state for editing to fix Korean typing issue (IME)
   const [localReportData, setLocalReportData] = useState<ReportData | null>(null);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [refiningField, setRefiningField] = useState<string | null>(null);
 
   // Sync localReportData when current student/week or reports change
   useEffect(() => {
@@ -541,6 +570,28 @@ function MainApp() {
     const insight = await generateAIInsight(localReportData, history, userApiKey);
     updateLocalField('aiInsight', insight);
     setIsGeneratingAI(false);
+  };
+
+  const handleRefineField = async (path: string, fieldName: string) => {
+    if (!localReportData) return;
+    
+    // Get current text from path
+    const keys = path.split('.');
+    let current: any = localReportData;
+    for (const key of keys) {
+      current = current[key];
+    }
+    const currentText = current as string;
+    
+    if (!currentText.trim() || currentText.includes("입력하세요")) {
+      alert("내용을 먼저 입력해주세요.");
+      return;
+    }
+
+    setRefiningField(path);
+    const refined = await refineTextWithAI(fieldName, currentText, userApiKey);
+    updateLocalField(path, refined);
+    setRefiningField(null);
   };
 
   const getCompetencyLevel = (score: number) => {
@@ -693,7 +744,6 @@ function MainApp() {
     alert("API 키가 브라우저에 안전하게 저장되었습니다.");
     setShowApiKeyInput(false);
   };
-
   const isSuperAdmin = user?.email === "thswjdals7733@gmail.com";
 
   // Fetch admin data and permissions
@@ -1082,6 +1132,42 @@ function MainApp() {
                 </motion.div>
               )}
 
+              {/* API Key Input Form */}
+              {showApiKeyInput && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mt-4 p-4 bg-indigo-900/40 border border-indigo-400/30 rounded-xl space-y-3"
+                >
+                  <div className="flex items-center gap-2 text-indigo-200 mb-1">
+                    <AlertTriangle size={14} />
+                    <p className="text-[10px] font-bold uppercase">Gemini API 키 설정 (GitHub Pages용)</p>
+                  </div>
+                  <p className="text-[11px] text-indigo-100 leading-relaxed">
+                    깃허브 페이지와 같은 환경에서 AI 기능을 사용하려면 본인의 Gemini API 키가 필요합니다. 
+                    입력하신 키는 서버에 저장되지 않고 **현재 브라우저에만 안전하게 저장**됩니다.
+                  </p>
+                  <div className="flex gap-2">
+                    <input 
+                      type="password"
+                      placeholder="AI API 키 입력 (AI Studio에서 발급)"
+                      value={userApiKey}
+                      onChange={(e) => setUserApiKey(e.target.value)}
+                      className="flex-grow p-2 bg-white text-slate-900 rounded-lg text-sm outline-none"
+                    />
+                    <button 
+                      onClick={() => saveApiKey(userApiKey)}
+                      className="px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-bold hover:bg-indigo-400 transition-colors"
+                    >
+                      저장
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-indigo-300">
+                    * 키가 없으시다면 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="underline">Google AI Studio</a>에서 무료로 발급받으실 수 있습니다.
+                  </p>
+                </motion.div>
+              )}
+
               {/* Inline Add Forms */}
               {isSuperAdmin && showAdminManage && (
                 <motion.div 
@@ -1310,7 +1396,17 @@ function MainApp() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">출결 비고</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-500 uppercase">출결 비고</label>
+                    <button 
+                      onClick={() => handleRefineField('attendance.note', '출결 비고')}
+                      disabled={refiningField === 'attendance.note'}
+                      className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                    >
+                      {refiningField === 'attendance.note' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                      AI 문장 다듬기
+                    </button>
+                  </div>
                   <input 
                     type="text" 
                     value={localReportData.attendance.note} 
@@ -1325,7 +1421,17 @@ function MainApp() {
                 <h2 className="text-lg font-bold text-slate-800 border-b pb-2">성적 정밀 분석</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">분석 주제</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 uppercase">분석 주제</label>
+                      <button 
+                        onClick={() => handleRefineField('analysis.topic', '분석 주제')}
+                        disabled={refiningField === 'analysis.topic'}
+                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                      >
+                        {refiningField === 'analysis.topic' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                        AI 문장 다듬기
+                      </button>
+                    </div>
                     <input 
                       type="text" 
                       value={localReportData.analysis.topic} 
@@ -1486,7 +1592,17 @@ function MainApp() {
                 <h2 className="text-lg font-bold text-slate-800 border-b pb-2">주간 학습 요약</h2>
                 <div className="space-y-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">이번 주 학습 내용</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 uppercase">이번 주 학습 내용</label>
+                      <button 
+                        onClick={() => handleRefineField('feedback.weeklyContent', '이번 주 학습 내용')}
+                        disabled={refiningField === 'feedback.weeklyContent'}
+                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                      >
+                        {refiningField === 'feedback.weeklyContent' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                        AI 문장 다듬기
+                      </button>
+                    </div>
                     <textarea 
                       value={localReportData.feedback.weeklyContent} 
                       onChange={(e) => updateLocalField('feedback.weeklyContent', e.target.value)}
@@ -1494,7 +1610,17 @@ function MainApp() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">과제 및 테스트 예고</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 uppercase">과제 및 테스트 예고</label>
+                      <button 
+                        onClick={() => handleRefineField('feedback.homeworkNotice', '과제 및 테스트 예고')}
+                        disabled={refiningField === 'feedback.homeworkNotice'}
+                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                      >
+                        {refiningField === 'feedback.homeworkNotice' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                        AI 문장 다듬기
+                      </button>
+                    </div>
                     <textarea 
                       value={localReportData.feedback.homeworkNotice} 
                       onChange={(e) => updateLocalField('feedback.homeworkNotice', e.target.value)}
@@ -1502,7 +1628,17 @@ function MainApp() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">다음 주 수업 안내</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 uppercase">다음 주 수업 안내</label>
+                      <button 
+                        onClick={() => handleRefineField('feedback.nextClassNotice', '다음 주 수업 안내')}
+                        disabled={refiningField === 'feedback.nextClassNotice'}
+                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                      >
+                        {refiningField === 'feedback.nextClassNotice' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                        AI 문장 다듬기
+                      </button>
+                    </div>
                     <textarea 
                       value={localReportData.feedback.nextClassNotice} 
                       onChange={(e) => updateLocalField('feedback.nextClassNotice', e.target.value)}
@@ -1510,7 +1646,17 @@ function MainApp() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">추가 보충 내용</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-500 uppercase">추가 보충 내용</label>
+                      <button 
+                        onClick={() => handleRefineField('feedback.extraFeedback', '추가 보충 내용')}
+                        disabled={refiningField === 'feedback.extraFeedback'}
+                        className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-2 py-1 rounded-lg transition-colors border border-indigo-100 disabled:opacity-50"
+                      >
+                        {refiningField === 'feedback.extraFeedback' ? <div className="w-2 h-2 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /> : <Sparkles size={10} />}
+                        AI 문장 다듬기
+                      </button>
+                    </div>
                     <textarea 
                       value={localReportData.feedback.extraFeedback} 
                       onChange={(e) => updateLocalField('feedback.extraFeedback', e.target.value)}
